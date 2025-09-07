@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Hover effects for table cells */
+.calendar-cell:hover {
+  background-color: #f9fafb;
+  transition: background-color 0.15s ease;
+}
+
+/* Animation for modals */
+.modal-enter {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+.modal-enter-active {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Current day highlighting */
+.bg-yellow-25 {
+  background-color: #fffbeb;
+}
+
+/* Drag and drop styles */
+.dragging {
+  opacity: 0.5;
+}
+
+.drag-over {
+  border: 2px dashed #3b82f6;
+  background-color: #dbeafe;
+}
+
+/* Entry hover effects */
+.entry-item {
+  transition: all 0.2s ease;
+}
+
+.entry-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Custom button styles */
+.btn-primary {
+  @apply bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors;
+}
+
+.btn-secondary {
+  @apply bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition-colors;
+}
+
+.btn-success {
+  @apply bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors;
+}
+
+.btn-danger {
+  @apply bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors;
+}
+
+/* Tooltip styles */
+.tooltip {
+  position: relative;
+}
+
+.tooltip:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 1000;
+}
+
+/* Rotation panel animations */
+.rotation-item {
+  transition: all 0.3s ease;
+}
+
+.rotation-item.next {
+  transform: scale(1.05);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Calendar grid enhancements */
+.calendar-grid {
+  overflow-x: auto;
+}
+
+.calendar-grid table {
+  min-width: 100%;
+}
+
+.calendar-grid th,
+.calendar-grid td {
+  min-width: 120px;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .calendar-grid th,
+  .calendar-grid td {
+    min-width: 100px;
+    padding: 8px 4px;
+  }
+  
+  .modal {
+    margin: 16px;
+    max-height: calc(100vh - 32px);
+  }
+}
