@@ -30,6 +30,14 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   const [showDayOfMonth, setShowDayOfMonth] = useState(true);
   const [showDayOfWeek, setShowDayOfWeek] = useState(false);
   
+  // New restriction toggle states
+  const [showRestrictions, setShowRestrictions] = useState(true);
+  const [showCanDo, setShowCanDo] = useState(true);
+  const [showCantDo, setShowCantDo] = useState(false);
+  
+  // All property types available in the system
+  const allPropertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[] = ['MFH', 'MF', 'SFH', 'Commercial'];
+  
   // Zoom controls
   const zoomIn = () => setZoomLevel(prev => Math.min(prev + 10, 150));
   const zoomOut = () => setZoomLevel(prev => Math.max(prev - 10, 50));
@@ -80,6 +88,34 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
       case 3: return 'rd';
       default: return 'th';
     }
+  };
+
+  // Function to render rep restriction info
+  const renderRepRestrictions = (rep: SalesRep) => {
+    if (!showRestrictions || (!showCanDo && !showCantDo)) {
+      return null;
+    }
+
+    const canDoTypes = rep.parameters.propertyTypes.map(type => type as string);
+    const cantDoTypes = allPropertyTypes.filter(type => !canDoTypes.includes(type));
+
+    return (
+      <span className="text-xs mt-1 block">
+        {showCanDo && (
+          <div className="text-gray-500">
+            {canDoTypes.join(', ')}
+            {rep.parameters.maxUnits && ` (max ${rep.parameters.maxUnits})`}
+          </div>
+        )}
+        {showCantDo && cantDoTypes.length > 0 && (
+          <div className="text-red-500">
+            {cantDoTypes.join(', ')}
+            {rep.parameters.maxUnits && ` (nothing over ${rep.parameters.maxUnits})`}
+            {!rep.parameters.maxUnits && ` (no unit limit)`}
+          </div>
+        )}
+      </span>
+    );
   };
 
   // Calculate dynamic styling - zoom affects everything proportionally
@@ -203,7 +239,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
         </div>
 
         {/* Size and Format Controls */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
           {/* Row Height Slider */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-700">
@@ -262,6 +298,44 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                 />
                 <span className="text-sm text-gray-600">Show Day of Week</span>
               </label>
+            </div>
+          </div>
+
+          {/* Restriction Display Toggles */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-700">Rep Restrictions</label>
+            <div className="flex flex-col space-y-2">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={showRestrictions}
+                  onChange={(e) => setShowRestrictions(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-600">Show Restrictions</span>
+              </label>
+              {showRestrictions && (
+                <>
+                  <label className="flex items-center space-x-2 ml-4">
+                    <input
+                      type="checkbox"
+                      checked={showCanDo}
+                      onChange={(e) => setShowCanDo(e.target.checked)}
+                      className="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
+                    />
+                    <span className="text-sm text-gray-600">Restrictions</span>
+                  </label>
+                  <label className="flex items-center space-x-2 ml-4">
+                    <input
+                      type="checkbox"
+                      checked={showCantDo}
+                      onChange={(e) => setShowCantDo(e.target.checked)}
+                      className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-500"
+                    />
+                    <span className="text-sm text-gray-600">Permissions</span>
+                  </label>
+                </>
+              )}
             </div>
           </div>
 
@@ -378,10 +452,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                 >
                   <div className="flex flex-col items-center justify-center h-full">
                     <span className="font-semibold text-xs">{rep.name}</span>
-                    <span className="text-xs text-gray-500 mt-1">
-                      {rep.parameters.propertyTypes.join(', ')}
-                      {rep.parameters.maxUnits && ` (max ${rep.parameters.maxUnits})`}
-                    </span>
+                    {renderRepRestrictions(rep)}
                   </div>
                 </th>
               ))}
@@ -399,9 +470,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                 >
                   <div className="flex flex-col items-center justify-center h-full">
                     <span className="font-semibold text-xs">{rep.name}</span>
-                    <span className="text-xs text-gray-500 mt-1">
-                      {rep.parameters.propertyTypes.join(', ')} (1K+)
-                    </span>
+                    {renderRepRestrictions(rep)}
                   </div>
                 </th>
               ))}
