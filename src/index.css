@@ -151,3 +151,207 @@ code {
     max-height: calc(100vh - 32px);
   }
 }
+
+/* Add these styles to your existing src/index.css file */
+
+/* Enhanced scrollbar for zoom view */
+.calendar-grid::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.calendar-grid::-webkit-scrollbar-track {
+  background: #f8f9fa;
+  border-radius: 6px;
+}
+
+.calendar-grid::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 6px;
+  border: 2px solid #f8f9fa;
+}
+
+.calendar-grid::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+.calendar-grid::-webkit-scrollbar-corner {
+  background: #f8f9fa;
+}
+
+/* Custom slider styling for zoom control */
+.slider {
+  background: linear-gradient(to right, #e5e7eb 0%, #e5e7eb 100%);
+  outline: none;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.slider:hover {
+  opacity: 1;
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.slider::-webkit-slider-thumb:hover {
+  background: #2563eb;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.slider::-moz-range-thumb:hover {
+  background: #2563eb;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* Smooth zoom transitions */
+.calendar-grid table {
+  transition: transform 0.2s ease-out;
+}
+
+/* Ensure proper z-index layering during zoom */
+.calendar-grid .sticky {
+  z-index: 20;
+}
+
+/* Improved cell hover states for zoomed view */
+.calendar-grid td:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.15s ease;
+  z-index: 10;
+  position: relative;
+}
+
+/* Better visibility for entry actions at smaller zoom levels */
+.calendar-grid td .group:hover .hidden {
+  display: flex !important;
+}
+
+/* Responsive zoom button sizing */
+@media (max-width: 768px) {
+  .slider {
+    width: 12px;
+  }
+  
+  .calendar-grid::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+}
+
+/* Animation for zoom level changes */
+@keyframes zoomChange {
+  0% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+.calendar-grid {
+  animation: zoomChange 0.2s ease-out;
+}
+
+/* Color backgrounds for rep sections */
+.bg-blue-25 {
+  background-color: #f0f9ff;
+}
+
+.bg-green-25 {
+  background-color: #f0fdf4;
+}
+
+.bg-yellow-25 {
+  background-color: #fffbeb;
+}
+
+.bg-gray-25 {
+  background-color: #fafafa;
+}
+
+.bg-red-150 {
+  background-color: #fecaca;
+}
+
+.bg-yellow-150 {
+  background-color: #fef3c7;
+}
+
+.bg-green-150 {
+  background-color: #bbf7d0;
+}
+
+.bg-blue-150 {
+  background-color: #bfdbfe;
+}
+
+/* Enhanced table borders for better visibility at different zoom levels */
+.calendar-grid table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.calendar-grid th,
+.calendar-grid td {
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.calendar-grid th:first-child,
+.calendar-grid td:first-child {
+  border-left: 1px solid #e5e7eb;
+}
+
+.calendar-grid thead tr:first-child th {
+  border-top: 1px solid #e5e7eb;
+}
+
+/* Better text scaling at different zoom levels */
+.calendar-grid .text-xs {
+  font-size: max(0.6rem, calc(0.75rem * var(--zoom-factor, 1)));
+}
+
+.calendar-grid .text-sm {
+  font-size: max(0.7rem, calc(0.875rem * var(--zoom-factor, 1)));
+}
+
+/* Improved sticky positioning during zoom */
+.calendar-grid .sticky {
+  position: sticky;
+  background-color: inherit;
+}
+
+/* Loading state for smooth transitions */
+.calendar-grid[data-loading="true"] {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.calendar-grid[data-loading="true"]::after {
+  content: "Adjusting zoom...";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  z-index: 1000;
+}

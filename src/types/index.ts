@@ -38,6 +38,7 @@ export interface RotationState {
 }
 
 export interface LeadEntry {
+  unitCount: any;
   id: string;
   day: number;
   repId: string;
