@@ -47,41 +47,32 @@ const calculateNextInRotation = (
   // Initialize all reps with 0 hits
   baseOrder.forEach(repId => hits.set(repId, 0));
   
-  // Count skips and qualifying leads using a deduplication approach
-  // Multiple events on the same day for the same rep only count as 1 hit
-  const hitsByRepByDay = new Map<string, Set<string>>();
-  
+  // Count each skip and qualifying lead individually (no deduplication)
   entries.forEach(entry => {
-    const dayKey = `${entry.day}`;
-    
+    // Only count entries for reps that are in this specific rotation
+    if (!baseOrder.includes(entry.repId)) {
+      return; // Skip this entry if rep is not in this rotation
+    }
+
     if (entry.type === 'skip') {
-      // Skip always counts as a hit
-      if (!hitsByRepByDay.has(entry.repId)) {
-        hitsByRepByDay.set(entry.repId, new Set());
-      }
-      hitsByRepByDay.get(entry.repId)!.add(dayKey);
-    } else if (entry.type === 'lead') {
+      // Each skip counts as a hit
+      hits.set(entry.repId, (hits.get(entry.repId) || 0) + 1);
+    } else if (entry.type === 'lead' && entry.leadId) {
       // Lead counts as hit if it qualifies for this lane
       const lead = leads.find(l => l.id === entry.leadId);
       if (lead) {
         const leadIs1kPlus = lead.unitCount >= 1000;
+        // Only count leads that match this rotation type
         if (leadIs1kPlus === is1kPlus) {
-          if (!hitsByRepByDay.has(entry.repId)) {
-            hitsByRepByDay.set(entry.repId, new Set());
-          }
-          hitsByRepByDay.get(entry.repId)!.add(dayKey);
+          hits.set(entry.repId, (hits.get(entry.repId) || 0) + 1);
         }
       }
     }
   });
 
-  // Convert to final hit counts
-  hitsByRepByDay.forEach((daySet, repId) => {
-    hits.set(repId, daySet.size);
-  });
-
-  // Find minimum hits
-  const minHits = Math.min(...Array.from(hits.values()));
+  // Find minimum hits among reps in this rotation
+  const hitValues = Array.from(hits.values());
+  const minHits = Math.min(...hitValues);
   
   // Find first rep in base order with minimum hits
   for (const repId of baseOrder) {
@@ -340,7 +331,8 @@ export default function App() {
         url: undefined,
         comments: [],
         month,
-        year
+        year,
+        unitCount: undefined
       };
       
       const updatedData = {
@@ -392,7 +384,8 @@ export default function App() {
       comments: newLead.comments,
       leadId: newLead.id,
       month,
-      year
+      year,
+      unitCount: undefined
     };
 
     const updatedData = {
