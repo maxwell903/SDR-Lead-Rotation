@@ -332,7 +332,9 @@ export default function App() {
         comments: [],
         month,
         year,
-        unitCount: undefined
+        unitCount: undefined,
+        // UPDATED: Set rotationTarget for non-lead entries based on leadData
+        rotationTarget: leadData.rotationTarget || 'both' // Default to 'both' for backwards compatibility
       };
       
       const updatedData = {
@@ -385,7 +387,10 @@ export default function App() {
       leadId: newLead.id,
       month,
       year,
-      unitCount: undefined
+      // UPDATED: Store unitCount in the entry for calendar display logic
+      unitCount: newLead.unitCount,
+      // UPDATED: Set rotationTarget based on unit count 
+      rotationTarget: newLead.unitCount >= 1000 ? 'over1k' : 'sub1k'
     };
 
     const updatedData = {
@@ -472,6 +477,11 @@ export default function App() {
             value: updatedData.accountNumber || entry.value,
             url: updatedData.url || entry.url,
             comments: updatedData.comments || entry.comments,
+            // UPDATED: Update unitCount and rotationTarget when entry is updated
+            unitCount: updatedData.unitCount !== undefined ? updatedData.unitCount : entry.unitCount,
+            rotationTarget: updatedData.unitCount !== undefined 
+              ? (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k')
+              : entry.rotationTarget
           };
         }
         return entry;

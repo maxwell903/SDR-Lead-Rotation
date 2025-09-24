@@ -144,8 +144,35 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     } as React.CSSProperties;
   }, [zoomLevel, rowHeight, columnWidth]);
 
-  const getEntriesForCell = (day: number, repId: string) => {
-    return leadEntries.filter(entry => entry.day === day && entry.repId === repId);
+  // UPDATED: Modified to consider rotation context
+  const getEntriesForCell = (day: number, repId: string, rotationContext: 'sub1k' | '1kplus') => {
+    return leadEntries.filter(entry => {
+      if (entry.day !== day || entry.repId !== repId) {
+        return false;
+      }
+      
+      // For non-lead entries (skip, ooo, next), use rotationTarget if available
+      if (entry.type !== 'lead') {
+        if (entry.rotationTarget) {
+          if (entry.rotationTarget === 'both') return true;
+          if (entry.rotationTarget === 'sub1k' && rotationContext === 'sub1k') return true;
+          if (entry.rotationTarget === 'over1k' && rotationContext === '1kplus') return true;
+          return false;
+        }
+        // Fallback for entries without rotationTarget - show in both (backwards compatibility)
+        return true;
+      }
+      
+      // For lead entries, determine rotation based on unit count
+      // Note: entry.unitCount might be undefined for older entries, so we need to check the lead data
+      if (entry.unitCount !== undefined) {
+        const isOver1k = entry.unitCount >= 1000;
+        return rotationContext === '1kplus' ? isOver1k : !isOver1k;
+      }
+      
+      // Fallback for entries without unit count - show in both (backwards compatibility)
+      return true;
+    });
   };
 
   const getCellStyle = (entries: LeadEntry[], day: number) => {
@@ -501,9 +528,9 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                   </div>
                 </td>
 
-                {/* Sub 1K Rotation Cells - Variable size controlled by sliders */}
+                {/* Sub 1K Rotation Cells - UPDATED: Pass rotation context */}
                 {sub1kReps.map(rep => {
-                  const entries = getEntriesForCell(day, rep.id);
+                  const entries = getEntriesForCell(day, rep.id, 'sub1k');
                   return (
                     <td 
                       key={`${day}-${rep.id}`} 
@@ -571,9 +598,9 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                   );
                 })}
 
-                {/* 1K+ Rotation Cells - Variable size controlled by sliders */}
+                {/* 1K+ Rotation Cells - UPDATED: Pass rotation context */}
                 {over1kReps.map(rep => {
-                  const entries = getEntriesForCell(day, rep.id);
+                  const entries = getEntriesForCell(day, rep.id, '1kplus');
                   return (
                     <td 
                       key={`${day}-${rep.id}`} 

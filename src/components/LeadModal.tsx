@@ -26,7 +26,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
     accountNumber: editingEntry?.value || '',
     url: editingEntry?.url || '',
     propertyTypes: [] as string[],
-    unitCount: editingEntry ? 0 : 0,
+    unitCount: editingEntry?.unitCount || 0,
     comments: editingEntry?.comments || [],
     assignedTo: ''
   });
@@ -45,6 +45,36 @@ const LeadModal: React.FC<LeadModalProps> = ({
   // Check if the selected rep can handle 1K+ (for showing rotation toggle)
   const selectedRep = selectedCell ? salesReps.find(rep => rep.id === selectedCell.repId) : null;
   const canHandle1kPlus = selectedRep?.parameters.canHandle1kPlus || false;
+
+  // UPDATED: Initialize form data for editing
+  useEffect(() => {
+    if (editingEntry && editingEntry.type === 'lead') {
+      // Find the associated lead data to populate property types
+      // For now, we'll use default values since we don't have direct access to lead data
+      // This could be improved by passing lead data to the modal
+      setFormData(prev => ({
+        ...prev,
+        accountNumber: editingEntry.value || '',
+        url: editingEntry.url || '',
+        unitCount: editingEntry.unitCount || 0,
+        comments: editingEntry.comments || [],
+        assignedTo: editingEntry.repId,
+        // Note: propertyTypes would need to be reconstructed from the associated lead
+      }));
+    }
+    
+    // Initialize rotationTarget from existing entry or based on rep capabilities
+    if (editingEntry?.rotationTarget) {
+      setRotationTarget(editingEntry.rotationTarget);
+    } else if (canHandle1kPlus) {
+      // If editing and rep can handle both, determine based on unit count
+      if (editingEntry?.unitCount && editingEntry.unitCount >= 1000) {
+        setRotationTarget('over1k');
+      } else {
+        setRotationTarget('sub1k');
+      }
+    }
+  }, [editingEntry, canHandle1kPlus]);
 
   // Update eligible reps and next rep when form data changes
   useEffect(() => {
@@ -137,11 +167,15 @@ const LeadModal: React.FC<LeadModalProps> = ({
       }
     }
     
+    // UPDATED: Always include rotationTarget and unitCount in the saved data
     onSave({ 
       ...formData, 
       type: entryType,
       assignedTo: entryType !== 'lead' ? (selectedCell?.repId || formData.assignedTo) : formData.assignedTo,
-      rotationTarget: canHandle1kPlus ? rotationTarget : 'sub1k' // Only include rotation target for 1K+ capable reps
+      rotationTarget: entryType === 'lead' 
+        ? (formData.unitCount >= 1000 ? 'over1k' : 'sub1k')  // Determine based on unit count for leads
+        : (canHandle1kPlus ? rotationTarget : 'sub1k'), // Use selected target for non-leads
+      unitCount: entryType === 'lead' ? formData.unitCount : undefined
     });
   };
 
@@ -181,8 +215,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
             </select>
           </div>
 
-          {/* Rotation Target Toggle - Only show for 1K+ capable reps and for skip/lead entries */}
-          {canHandle1kPlus && (entryType === 'skip' || entryType === 'lead') && (
+          {/* Rotation Target Toggle - Only show for 1K+ capable reps and for skip/ooo/next entries */}
+          {canHandle1kPlus && entryType !== 'lead' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <label className="block text-sm font-medium mb-2 text-blue-800">
                 Which Rotation Should This Count For?

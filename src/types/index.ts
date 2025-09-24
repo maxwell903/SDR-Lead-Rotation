@@ -38,7 +38,6 @@ export interface RotationState {
 }
 
 export interface LeadEntry {
-  unitCount: any;
   id: string;
   day: number;
   repId: string;
@@ -49,6 +48,8 @@ export interface LeadEntry {
   leadId?: string;
   month: number;
   year: number;
+  // UPDATED: Properly typed unitCount for lead entries to support calendar display logic
+  unitCount?: number;
   rotationTarget?: 'sub1k' | 'over1k' | 'both'; // ENHANCED: Which rotation this entry should count for
 }
 
