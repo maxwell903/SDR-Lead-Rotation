@@ -1,6 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ChevronRight, ChevronUp, HelpCircle, Minimize2, Maximize2, Calendar, Clock, BarChart3 } from 'lucide-react';
 import type { SalesRep, RotationState, Lead, LeadEntry } from '../types';
+import {
+  ReplacementState,
+  filterOpenMarksByTime,
+} from '../features/leadReplacement.tsx';
 
 type TimeFilter = 'day' | 'week' | 'month' | 'ytd' | 'alltime';
 
@@ -11,6 +15,8 @@ interface RotationItem {
   hits: number; // number of skips + leads
   nextPosition: number; // next position in reordered sequence
   isNext: boolean; // true if this is the very next person up
+  /** Display position that reflects any overlay (e.g., replacement bump-to-top). */
+  displayPosition?: number;
 }
 
 interface RotationPanelProps {
@@ -19,6 +25,8 @@ interface RotationPanelProps {
   onUpdateRotation: (state: RotationState) => void;
   leadEntries: LeadEntry[];
   leads: Lead[];
+  // NEW: lead-replacement state
+  replacementState: ReplacementState;
 }
 
 const RotationPanel: React.FC<RotationPanelProps> = ({ 
@@ -26,9 +34,10 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
   rotationState, 
   onUpdateRotation, 
   leadEntries, 
-  leads 
+  leads,
+  replacementState,
 }) => {
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('day');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('alltime');
   const [expandedSub1k, setExpandedSub1k] = useState(false);
   const [expandedOver1k, setExpandedOver1k] = useState(false);
   const [visiblePositions, setVisiblePositions] = useState(20);
@@ -150,6 +159,15 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     // Initialize all reps in this rotation with 0 hits
     baseOrder.forEach(repId => hitCounts.set(repId, 0));
 
+    // Treat a closed replacement pair (original + replacement) as ONE hit:
+    // - Don't count the original lead once it has a replacement.
+    const closedOriginalLeadIds = new Set<string>();
+    for (const rec of Object.values(replacementState.byLeadId)) {
+      if (rec.replacedByLeadId) {
+        closedOriginalLeadIds.add(rec.leadId);
+      }
+    }
+
     filteredEntries.forEach(entry => {
       // Only count hits for reps that are in this specific rotation
       if (!baseOrder.includes(entry.repId)) {
@@ -161,12 +179,17 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       if (entry.type === 'skip') {
         // Skips count for whichever rotation this rep belongs to
         qualifies = true;
-      } else if (entry.type === 'lead' && entry.leadId) {
-        const lead = leadsMap.get(entry.leadId);
-        if (lead) {
-          const leadIsOver1k = lead.unitCount >= 1000;
-          // Only count leads that match this rotation type
-          qualifies = isOver1k ? leadIsOver1k : !leadIsOver1k;
+        } else if (entry.type === 'lead' && entry.leadId) {
+        // Skip counting the ORIGINAL lead if it has been replaced (closed pair).
+          if (closedOriginalLeadIds.has(entry.leadId)) {
+            qualifies = false;
+          } else {
+            const lead = leadsMap.get(entry.leadId);
+            if (lead) {
+              const leadIsOver1k = lead.unitCount >= 1000;
+              // Only count leads that match this rotation type
+              qualifies = isOver1k ? leadIsOver1k : !leadIsOver1k;
+          }
         }
       }
 
@@ -279,6 +302,55 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     });
   };
 
+  // NEW — Replacement overlay helpers (time-aware)
+  const getOpenRepOrder = (lane: 'sub1k' | '1kplus'): string[] => {
+    const open = filterOpenMarksByTime(replacementState, lane as any, timeFilter as any, new Date());
+    const order: string[] = [];
+    for (const rec of open) {
+      if (!order.includes(rec.repId)) order.push(rec.repId);
+    }
+    return order;
+  };
+
+  const overlayCollapsed = (items: RotationItem[], lane: 'sub1k' | '1kplus'): RotationItem[] => {
+    const openOrder = getOpenRepOrder(lane);
+    if (openOrder.length === 0) return items;
+    const byId = new Map(items.map(i => [i.repId, i]));
+    const head: RotationItem[] = [];
+    openOrder.forEach(id => { const it = byId.get(id); if (it) head.push(it); });
+    const tail = items.filter(i => !openOrder.includes(i.repId));
+    const merged = [...head, ...tail];
+    // Renumber for display so labels match the visible order (1..n)
+    return merged.map((i, idx) => ({
+      ...i,
+      isNext: idx === 0,
+      displayPosition: idx + 1,
+    }));
+  };
+
+  const overlayExpanded = (expandedItems: RotationItem[], lane: 'sub1k' | '1kplus'): RotationItem[] => {
+    const openOrder = getOpenRepOrder(lane);
+    if (openOrder.length === 0) return expandedItems;
+    const firstByRep = new Map<string, RotationItem>();
+    for (const it of expandedItems) {
+      if (!firstByRep.has(it.repId)) firstByRep.set(it.repId, it);
+    }
+    const head: RotationItem[] = [];
+    openOrder.forEach((id, idx) => {
+      const src = firstByRep.get(id);
+      if (src) head.push({ ...src, isNext: idx === 0 });
+    });
+    // Keep the rest, but don't highlight them as next
+    const rest = expandedItems.map(i => ({ ...i, isNext: false }));
+    const merged = [...head, ...rest];
+    // Renumber display positions across the merged list
+    return merged.map((i, idx) => ({
+      ...i,
+      isNext: idx === 0,
+      displayPosition: idx + 1,
+    }));
+  };
+
   // Calculate statistics for the summary
   const calculateStatistics = () => {
     const filteredEntries = getFilteredEntries(leadEntries);
@@ -318,16 +390,11 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       leadCounts.get(rep.id) === leastLeadsCount
     ).map(rep => rep.name);
     
-    // Count leads that might need replacement (leads assigned to reps who were OOO that day)
-    let leadsNeedingReplacement = 0;
-    filteredEntries.forEach(entry => {
-      if (entry.type === 'lead') {
-        const oooKey = `${entry.repId}-${entry.day}`;
-        if (oooEntries.has(oooKey)) {
-          leadsNeedingReplacement++;
-        }
-      }
-    });
+    
+    
+    const openSub = filterOpenMarksByTime(replacementState, 'sub1k' as any, timeFilter as any, new Date());
+    const openOver = filterOpenMarksByTime(replacementState, '1kplus' as any, timeFilter as any, new Date());
+    const leadsNeedingReplacement = openSub.length + openOver.length;
     
     // Original order
     const originalSub1kOrder = salesReps
@@ -374,13 +441,33 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     [rotationState.normalRotationOver1k, leadEntries, leads, timeFilter, salesReps, visiblePositions]
   );
 
+  // NEW — Apply replacement overlay (time-aware)
+  const sub1kItemsOverlayed = useMemo(
+    () => overlayCollapsed(sub1kItems, 'sub1k'),
+    [sub1kItems, replacementState, timeFilter]
+  );
+  const sub1kExpandedOverlayed = useMemo(
+    () => overlayExpanded(sub1kExpanded, 'sub1k'),
+    [sub1kExpanded, replacementState, timeFilter]
+  );
+
+  const over1kItemsOverlayed = useMemo(
+    () => overlayCollapsed(over1kItems, '1kplus'),
+    [over1kItems, replacementState, timeFilter]
+  );
+  const over1kExpandedOverlayed = useMemo(
+    () => overlayExpanded(over1kExpanded, '1kplus'),
+    [over1kExpanded, replacementState, timeFilter]
+  );
+
+
   const statistics = useMemo(() => calculateStatistics(), [leadEntries, leads, timeFilter, salesReps]);
 
   // Update rotation state when next person changes
   useEffect(() => {
-    const nextSub1k = sub1kItems.find(item => item.isNext)?.repId || '';
-    const next1kPlus = over1kItems.find(item => item.isNext)?.repId || '';
-    
+    const nextSub1k = sub1kItemsOverlayed.find(item => item.isNext)?.repId || '';
+    const next1kPlus = over1kItemsOverlayed.find(item => item.isNext)?.repId || '';
+
     if (nextSub1k !== rotationState.nextSub1k || next1kPlus !== rotationState.next1kPlus) {
       onUpdateRotation({
         ...rotationState,
@@ -388,7 +475,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
         next1kPlus
       });
     }
-  }, [sub1kItems, over1kItems, rotationState, onUpdateRotation]);
+  }, [sub1kItemsOverlayed, over1kItemsOverlayed, rotationState, onUpdateRotation]);
 
   // Render individual rotation item
   const renderRotationItem = (item: RotationItem) => (
@@ -402,7 +489,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     >
       <div className="flex items-center space-x-3">
         <span className={`font-medium ${item.isNext ? 'text-blue-700' : 'text-gray-600'}`}>
-          {item.nextPosition}.
+          {(item.displayPosition ?? item.nextPosition)}.
         </span>
         <span className={`${item.isNext ? 'font-semibold' : 'font-medium'}`}>
           {item.name}
@@ -546,13 +633,13 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
         <div className="bg-white border rounded-lg p-3">
           <div className="text-xs text-gray-500 mb-1">Sub 1K Next:</div>
           <div className="font-medium text-gray-800">
-            {sub1kItems.find(item => item.isNext)?.name || 'None'}
+            {sub1kItemsOverlayed.find(item => item.isNext)?.name || 'None'}
           </div>
         </div>
         <div className="bg-white border rounded-lg p-3">
           <div className="text-xs text-gray-500 mb-1">1K+ Next:</div>
           <div className="font-medium text-gray-800">
-            {over1kItems.find(item => item.isNext)?.name || 'None'}
+            {over1kItemsOverlayed.find(item => item.isNext)?.name || 'None'}
           </div>
         </div>
       </div>
@@ -575,17 +662,17 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       <div className="space-y-4">
         {renderRotationLane(
           'Sub 1K Rotation',
-          sub1kItems,
-          sub1kExpanded,
+          sub1kItemsOverlayed,
+          sub1kExpandedOverlayed,
           expandedSub1k,
           () => setExpandedSub1k(!expandedSub1k)
         )}
         
         {renderRotationLane(
           '1K+ Rotation',
-          over1kItems,
-          over1kExpanded,
-          expandedOver1k,
+          over1kItemsOverlayed,
+          over1kExpandedOverlayed, 
+          expandedOver1k,       
           () => setExpandedOver1k(!expandedOver1k)
         )}
       </div>

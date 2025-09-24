@@ -1,5 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { SalesRep, LeadEntry, RotationState } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, Save, ExternalLink } from 'lucide-react';
+import {
+  ReplacementState,
+  buildReplacementOptions,
+} from '../features/leadReplacement.tsx';
+import { SalesRep, LeadEntry, RotationState, MonthData } from '../types';
 
 interface LeadModalProps {
   onClose: () => void;
@@ -12,18 +17,25 @@ interface LeadModalProps {
   getNextInRotation: (leadData: any) => string | null;
   // Add leads array to access lead data when editing
   leads?: any[];
+  // NEW: replacement support
+  replacementState: ReplacementState;
+  monthlyData: Record<string, MonthData>;
 }
 
-const LeadModal: React.FC<LeadModalProps> = ({ 
-  onClose, 
-  onSave, 
-  salesReps, 
-  selectedCell, 
+
+const LeadModal: React.FC<LeadModalProps> = ({
+  onClose,
+  onSave,
+  salesReps,
+  selectedCell,
   editingEntry,
   rotationState,
   getEligibleReps,
   getNextInRotation,
-  leads = []
+  leads = [],
+  // NEW
+  replacementState,
+  monthlyData,
 }) => {
   const [formData, setFormData] = useState({
     accountNumber: '',
@@ -47,6 +59,25 @@ const LeadModal: React.FC<LeadModalProps> = ({
   // Check if the selected rep can handle 1K+ (for showing rotation toggle)
   const selectedRep = selectedCell ? salesReps.find(rep => rep.id === selectedCell.repId) : null;
   const canHandle1kPlus = selectedRep?.parameters.canHandle1kPlus || false;
+
+   // NEW: replacement UI state
+  const [replaceToggle, setReplaceToggle] = useState<boolean>(false);
+  const [originalLeadIdToReplace, setOriginalLeadIdToReplace] = useState<string>('');
+
+  // NEW: all-time open marks -> dropdown options
+  const replacementOptions = useMemo(() => {
+    return buildReplacementOptions(monthlyData, replacementState, salesReps, { includeClosed: false });
+  }, [monthlyData, replacementState, salesReps]);
+
+  const selectedReplacement = useMemo(
+    () => replacementOptions.find(o => o.leadId === originalLeadIdToReplace),
+    [replacementOptions, originalLeadIdToReplace]
+  );
+
+  // NOTE: We’re not changing your Assign dropdown wiring here.
+  // The assignment will be **enforced in App.tsx** when saving a replacement.
+  // (So you can keep your current “assignedTo” UI unchanged for now.)
+
 
   // Initialize form data when editing - run only once when modal opens
   useEffect(() => {
@@ -233,6 +264,12 @@ const LeadModal: React.FC<LeadModalProps> = ({
       return;
     }
     
+    // NEW: require a selection if replacing
+    if (replaceToggle && !originalLeadIdToReplace) {
+      alert('Please select which lead you are replacing.');
+      return;
+    }
+
     const saveData = {
       ...formData,
       type: entryType,
@@ -245,7 +282,10 @@ const LeadModal: React.FC<LeadModalProps> = ({
       unitCount: entryType === 'lead' ? formData.unitCount : undefined,
       // Add editing flag and entry ID for updates
       isEditing: isEditing,
-      editingEntryId: editingEntry?.id
+      editingEntryId: editingEntry?.id,
+      // NEW: flags for App.tsx to close/open marks
+      replaceToggle,
+      originalLeadIdToReplace,
     };
     
     onSave(saveData);
@@ -286,6 +326,58 @@ const LeadModal: React.FC<LeadModalProps> = ({
               <option value="ooo">Out of Office</option>
               <option value="next">Next Indicator</option>
             </select>
+          </div>
+
+          {/* NEW: Replacement section (inserted before button row) */}
+          <div className="pt-3 mt-2 border-t">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={replaceToggle}
+                onChange={(e) => {
+                  setReplaceToggle(e.target.checked);
+                  if (!e.target.checked) setOriginalLeadIdToReplace('');
+                }}
+              />
+              Replace Lead
+            </label>
+            {replaceToggle && (
+              <div className="mt-3 space-y-2">
+                <label className="block text-xs text-gray-600">
+                  Choose a lead in need of replacement (All Time)
+                </label>
+                <select
+                  className="w-full rounded border px-3 py-2 text-sm"
+                  value={originalLeadIdToReplace}
+                  onChange={(e) => setOriginalLeadIdToReplace(e.target.value)}
+                >
+                  <option value="">— Select a lead to replace —</option>
+                  {replacementOptions.map(opt => (
+                    <option key={opt.leadId} value={opt.leadId}>
+                      {opt.repName} — {opt.accountNumber}
+                    </option>
+                  ))}
+                </select>
+                {selectedReplacement?.url && originalLeadIdToReplace && (
+                  <div className="text-xs">
+                    <a
+                      href={selectedReplacement.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 underline"
+                      title="Open the original account link"
+                    >
+                      <span>Open account</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <span className="text-gray-500 ml-2">
+                      (assignment will be locked to <b>{selectedReplacement.repName}</b>)
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Rotation Target Toggle - Only show for 1K+ capable reps and for skip/ooo/next entries */}

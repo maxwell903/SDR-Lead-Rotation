@@ -1,6 +1,13 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, } from 'react';
 import { Trash2, Edit, ZoomIn, ZoomOut, RotateCcw, ExternalLink } from 'lucide-react';
-import { SalesRep, LeadEntry, RotationState, Lead } from '../types';
+import { SalesRep, LeadEntry, RotationState, Lead, } from '../types';
+import {
+  ReplacementState,
+  getCalendarEntryVisual,
+  getReplacementPartnerLeadId,
+  MarkForReplacementButton,
+  ReplacementPill,
+} from '../features/leadReplacement.tsx';
 
 interface CalendarGridProps {
   salesReps: SalesRep[];
@@ -12,9 +19,12 @@ interface CalendarGridProps {
   onDeleteEntry: (entryId: string) => void;
   onEditEntry: (entry: LeadEntry) => void;
   leads: Lead[];
+  //lead-replacement props
+  replacementState: ReplacementState;
+  onMarkForReplacement: (leadId: string) => void;
 }
 
-const CalendarGrid: React.FC<CalendarGridProps> = ({ 
+const CalendarGrid: React.FC<CalendarGridProps> = ({
   salesReps, 
   leadEntries, 
   daysInMonth, 
@@ -23,7 +33,10 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   onCellClick,
   onDeleteEntry,
   onEditEntry,
-  leads
+  leads,
+  // NEW
+  replacementState,
+  onMarkForReplacement,
 }) => {
   // State management
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -99,6 +112,14 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     }
     return null;
   };
+
+  // NEW: helper to fetch account number by lead id (for indicators)
+  const getAccountByLeadId = (leadId?: string): string | null => {
+    if (!leadId) return null;
+    const l = leads.find(x => x.id === leadId);
+    return l ? l.accountNumber : null;
+  };
+
 
   // Function to get URL for an entry
   const getEntryUrl = (entry: LeadEntry): string | null => {
@@ -272,6 +293,21 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     }
   };
 
+  // NEW: replace default style when an entry participates in replacement flow
+  const getEntryVisualClasses = (entry: LeadEntry) => {
+    const vis = getCalendarEntryVisual(entry, replacementState);
+    if (vis.isOriginalMarkedOpen) {
+      // Original lead marked for replacement (open) — orange box
+      return 'text-orange-700 bg-orange-50 border-orange-200';
+    }
+    if (vis.isReplacementLead) {
+      // Replacement lead — add a soft success ring while keeping base styling
+      return `${getEntryTypeStyle(entry.type)} ring-1 ring-emerald-300`;
+    }
+    return getEntryTypeStyle(entry.type);
+  };
+
+
   // Function to render entry content with hyperlink support
   const renderEntryContent = (entry: LeadEntry) => {
     if (entry.type === 'lead') {
@@ -283,7 +319,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
             {entryUrl ? (
               <button
                 onClick={(e) => handleHyperlinkClick(e, entry)}
-                className="text-blue-600 hover:text-blue-800 underline hover:no-underline transition-colors flex items-center space-x-1 truncate"
+                 className="text-blue-600 hover:text-blue-800 underline transition-colors flex items-center space-x-1 truncate"
                 title={`Click to open: ${entryUrl}`}
               >
                 <span className="truncate">{entry.value}</span>
@@ -298,6 +334,40 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
               {entry.unitCount} unit{entry.unitCount !== 1 ? 's' : ''}
             </div>
           )}
+
+         {/* NEW: subtle indicators for replacement relationships */}
+          {(() => {
+            const vis = getCalendarEntryVisual(entry, replacementState);
+            const partner = getReplacementPartnerLeadId(entry, replacementState);
+            const partnerAcct = getAccountByLeadId(partner.partnerLeadId || undefined);
+            if (vis.isOriginalMarkedOpen) {
+              return (
+                <div className="mt-0.5">
+                  <ReplacementPill relation="needs" text="Needs Replacement" />
+                </div>
+              );
+            }
+            if (vis.isReplacementLead) {
+              return (
+                <div className="mt-0.5 flex items-center space-x-2">
+                  <ReplacementPill relation="replaces" text="Replacement" />
+                  {partnerAcct && (
+                    <span className="text-[10px] text-emerald-700">for {partnerAcct}</span>
+                  )}
+                </div>
+              );
+            }
+            if (vis.isOriginalMarkedClosed && partnerAcct) {
+              // show tiny note on the original that it was replaced
+              return (
+                <div className="mt-0.5">
+                  <span className="text-[10px] text-emerald-700">Replaced by {partnerAcct}</span>
+                </div>
+              );
+            }
+            return null;
+          })()} 
+
         </div>
       );
     } else {
@@ -640,15 +710,30 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                           </div>
                         ) : (
                           entries.map(entry => (
-                            <div 
-                              key={entry.id} 
-                              className={`entry-item group flex items-center justify-between p-1 rounded border transition-all duration-200 ${getEntryTypeStyle(entry.type)}`}
+                            <div
+                              key={entry.id}
+                              className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
                             >
+
                               <div className="flex-1 min-w-0">
                                 {renderEntryContent(entry)}
                               </div>
-                              
+                              {/* NEW: hover actions include "Replace" for leads not already in replacement flow */}
                               <div className="hidden group-hover:flex items-center space-x-1 ml-2">
+                                {entry.type === 'lead' && entry.leadId && (() => {
+                                  const vis = getCalendarEntryVisual(entry, replacementState);
+                                  if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen) {
+                                    return (
+                                      <MarkForReplacementButton
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onMarkForReplacement(entry.leadId!);
+                                        }}
+                                      />
+                                    );
+                                  }
+                                  return null;
+                                })()}
                                 <button
                                   onClick={(e) => handleEntryAction(e, 'edit', entry)}
                                   className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
@@ -695,15 +780,29 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                           </div>
                         ) : (
                           entries.map(entry => (
-                            <div 
-                              key={entry.id} 
-                              className={`entry-item group flex items-center justify-between p-1 rounded border transition-all duration-200 ${getEntryTypeStyle(entry.type)}`}
+                            <div
+                              key={entry.id}
+                              className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
                             >
                               <div className="flex-1 min-w-0">
                                 {renderEntryContent(entry)}
                               </div>
-                              
+                             {/* NEW: hover actions include "Replace" for leads not already in replacement flow */}
                               <div className="hidden group-hover:flex items-center space-x-1 ml-2">
+                                {entry.type === 'lead' && entry.leadId && (() => {
+                                  const vis = getCalendarEntryVisual(entry, replacementState);
+                                  if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen) {
+                                    return (
+                                      <MarkForReplacementButton
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onMarkForReplacement(entry.leadId!);
+                                        }}
+                                      />
+                                    );
+                                  }
+                                  return null;
+                                })()}
                                 <button
                                   onClick={(e) => handleEntryAction(e, 'edit', entry)}
                                   className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"

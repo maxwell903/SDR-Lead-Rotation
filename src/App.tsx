@@ -6,6 +6,14 @@ import SalesRepManager from './components/SalesRepManager';
 import LeadModal from './components/LeadModal';
 import ParametersPanel from './components/ParametersPanel';
 import { SalesRep, Lead, RotationState, LeadEntry, MonthData } from './types';
+import {
+  ReplacementState,
+  createEmptyReplacementState,
+  markLeadForReplacement,
+  applyReplacement,
+  undoReplacementByDeletingReplacementLead,
+  canDeleteLead,
+} from './features/leadReplacement.tsx';
 
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
@@ -200,6 +208,10 @@ export default function App() {
     normalRotationSub1k: [],
     normalRotationOver1k: []
   });
+  // Lead-replacement state
+  const [replacementState, setReplacementState] = useState<ReplacementState>(
+    createEmptyReplacementState()
+  );
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [showRepManager, setShowRepManager] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
@@ -408,6 +420,13 @@ export default function App() {
       [monthKey]: updatedData
     }));
 
+     // If this is a replacement lead, close the mark now
+    if (leadData?.replaceToggle && leadData?.originalLeadIdToReplace) {
+      setReplacementState(prev =>
+        applyReplacement(prev, leadData.originalLeadIdToReplace, newLead)
+      );
+    }
+
     setShowLeadModal(false);
     setSelectedCell(null);
     
@@ -424,6 +443,15 @@ export default function App() {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     const entry = currentMonthData.entries.find(e => e.id === entryId);
     
+    // Guard: Can't delete an original lead that already has a replacement
+    if (entry?.type === 'lead' && entry.leadId) {
+      const guard = canDeleteLead(replacementState, entry.leadId);
+      if (!guard.allowed) {
+        alert(guard.reason || 'This lead cannot be deleted because it is linked to a replacement.');
+        return;
+      }
+    }
+
     if (entry) {
       const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
       let updatedLeads = currentMonthData.leads;
@@ -442,6 +470,28 @@ export default function App() {
         ...prev,
         [monthKey]: updatedData
       }));
+
+            // Replacement bookkeeping:
+      if (entry.type === 'lead' && entry.leadId) {
+        // If we deleted a replacement lead, reopen the original mark
+        setReplacementState(prev =>
+          undoReplacementByDeletingReplacementLead(prev, entry.leadId!)
+        );
+
+        // If we deleted an original lead that was marked OPEN (no replacement yet), remove the mark entirely
+        const rec = replacementState.byLeadId[entry.leadId!];
+        if (rec && !rec.replacedByLeadId) {
+          setReplacementState(prev => {
+            const next = {
+              byLeadId: { ...prev.byLeadId },
+              queue: prev.queue.filter(id => id !== entry.leadId!)
+            };
+            delete next.byLeadId[entry.leadId!];
+            return next;
+          });
+        }
+      }
+
 
       // Recalculate skip counts from scratch based on remaining entries
       const newSkipCounts: { [repId: string]: number } = {};
@@ -466,6 +516,22 @@ export default function App() {
     setSelectedCell({ day: entry.day, repId: entry.repId });
     setShowLeadModal(true);
   };
+
+  const handleMarkForReplacement = (leadId: string) => {
+  // Search across months for safety
+  let target: Lead | undefined;
+  for (const mk of Object.keys(monthlyData)) {
+    const md = monthlyData[mk];
+    const f = md?.leads?.find(l => l.id === leadId);
+    if (f) { target = f; break; }
+  }
+  if (!target) {
+    const inCurrent = currentMonthData.leads.find(l => l.id === leadId);
+    target = inCurrent;
+  }
+  if (!target) return;
+  setReplacementState(prev => markLeadForReplacement(prev, target!));
+};
 
   const handleUpdateEntry = (entryId: string, updatedData: any) => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
@@ -669,6 +735,8 @@ export default function App() {
               onDeleteEntry={handleDeleteEntry}
               onEditEntry={handleEditEntry}
               leads={currentMonthData.leads}
+              replacementState={replacementState}
+              onMarkForReplacement={handleMarkForReplacement}
             />
           </div>
           
@@ -679,6 +747,7 @@ export default function App() {
               onUpdateRotation={setRotationState}
               leadEntries={currentMonthData.entries}
               leads={currentMonthData.leads}
+              replacementState={replacementState}
             />
           </div>
         </div>
@@ -699,6 +768,8 @@ export default function App() {
           getEligibleReps={getEligibleReps}
           getNextInRotation={getNextInRotation}
           leads={currentMonthData.leads}
+          monthlyData={monthlyData}
+          replacementState={replacementState}
         />
       )}
 
