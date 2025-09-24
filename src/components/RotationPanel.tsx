@@ -12,7 +12,7 @@ interface RotationItem {
   repId: string;
   name: string;
   originalPosition: number; // 1-based position in base order
-  hits: number; // number of skips + leads
+  hits: number; // number of skips + leads (excluding marked leads)
   nextPosition: number; // next position in reordered sequence
   isNext: boolean; // true if this is the very next person up
   /** Display position that reflects any overlay (e.g., replacement bump-to-top). */
@@ -152,7 +152,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     });
   };
 
-  // FIXED: More robust hit counting logic
+  // UPDATED: Hit counting logic that excludes ALL marked leads (both open and closed)
   const countHits = (baseOrder: string[], isOver1k: boolean): Map<string, number> => {
     const filteredEntries = getFilteredEntries(leadEntries);
     const leadsMap = new Map(leads.map(l => [l.id, l]));
@@ -161,11 +161,11 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     // Initialize all reps in this rotation with 0 hits
     baseOrder.forEach(repId => hitCounts.set(repId, 0));
 
-    // FIXED: Handle replacement logic properly
-    const closedOriginalLeadIds = new Set<string>();
-    for (const rec of Object.values(replacementState.byLeadId)) {
-      if (rec.replacedByLeadId) {
-        closedOriginalLeadIds.add(rec.leadId);
+    // UPDATED: Exclude ALL marked leads, not just closed ones
+    const markedLeadIds = new Set<string>();
+    for (const rec of Object.values(replacementState.byLeadId || {})) {
+      if (rec && rec.leadId) {
+        markedLeadIds.add(rec.leadId);
       }
     }
 
@@ -180,8 +180,8 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       if (entry.type === 'skip') {
         qualifies = true;
       } else if (entry.type === 'lead' && entry.leadId) {
-        // FIXED: Skip counting the ORIGINAL lead if it has been replaced
-        if (closedOriginalLeadIds.has(entry.leadId)) {
+        // UPDATED: Skip counting ANY marked lead (open or closed)
+        if (markedLeadIds.has(entry.leadId)) {
           qualifies = false;
         } else {
           const lead = leadsMap.get(entry.leadId);
@@ -200,7 +200,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     return hitCounts;
   };
 
-  // FIXED: Simplified rotation sequence generation
+  // Generate rotation sequence based on hits
   const generateRotationSequence = (
     baseOrder: string[], 
     hitCounts: Map<string, number>, 
@@ -211,21 +211,21 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     const rotationSize = baseOrder.length;
     const sequence: Array<{ position: number; repId: string }> = [];
     
-    // Generate sequence by cycling through base order and removing hits
+    // Generate sequence by cycling through base order and accounting for hits
     for (let pos = 1; pos <= maxPositions; pos++) {
       const repIndex = (pos - 1) % rotationSize;
       const repId = baseOrder[repIndex];
       const hits = hitCounts.get(repId) || 0;
       
-      // Only include this position if we haven't skipped enough for this rep
+      // Calculate how many cycles this rep has been pushed back
       const repPositionsSkipped = Math.floor((pos - 1 - repIndex) / rotationSize);
       if (repPositionsSkipped < hits) {
-        // Skip this position for this rep
+        // Skip this position for this rep (they've been pushed back)
         continue;
       }
       
       sequence.push({
-        position: sequence.length + 1, // Renumber positions sequentially
+        position: sequence.length + 1,
         repId
       });
     }
@@ -233,12 +233,33 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     return sequence;
   };
 
-  // FIXED: Improved rotation items generation
+  // UPDATED: Get open replacement marks in chronological order
+  const getOpenRepOrder = (lane: 'sub1k' | '1kplus'): string[] => {
+    try {
+      const open = filterOpenMarksByTime(replacementState, lane as any, timeFilter as any, new Date());
+      const repOrder: string[] = [];
+      
+      // Sort by mark time to maintain FIFO order
+      open.sort((a, b) => a.markedAt - b.markedAt);
+      
+      for (const rec of open) {
+        if (rec.repId && !repOrder.includes(rec.repId)) {
+          repOrder.push(rec.repId);
+        }
+      }
+      return repOrder;
+    } catch (error) {
+      console.error('Error getting open rep order:', error);
+      return [];
+    }
+  };
+
+  // UPDATED: Generate rotation items for collapsed view
   const generateRotationItems = (baseOrder: string[], isOver1k: boolean): RotationItem[] => {
     if (baseOrder.length === 0) return [];
 
     const hitCounts = countHits(baseOrder, isOver1k);
-    const rotationSequence = generateRotationSequence(baseOrder, hitCounts, visiblePositions * 2);
+    const rotationSequence = generateRotationSequence(baseOrder, hitCounts, visiblePositions);
     
     // Create items showing first appearance of each rep
     const seenReps = new Set<string>();
@@ -268,7 +289,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     return items;
   };
 
-  // FIXED: Improved expanded view generation
+  // UPDATED: Generate expanded view
   const generateExpandedView = (baseOrder: string[], isOver1k: boolean): RotationItem[] => {
     if (baseOrder.length === 0) return [];
 
@@ -291,67 +312,54 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     });
   };
 
-  // FIXED: Replacement overlay helpers with proper error handling
-  const getOpenRepOrder = (lane: 'sub1k' | '1kplus'): string[] => {
-    try {
-      const open = filterOpenMarksByTime(replacementState, lane as any, timeFilter as any, new Date());
-      const order: string[] = [];
-      
-      // Sort by mark time to maintain FIFO order
-      open.sort((a, b) => a.markedAt - b.markedAt);
-      
-      for (const rec of open) {
-        if (!order.includes(rec.repId)) {
-          order.push(rec.repId);
-        }
-      }
-      return order;
-    } catch (error) {
-      console.error('Error getting open rep order:', error);
-      return [];
-    }
-  };
-
-  // FIXED: Simplified overlay collapsed logic
+  // UPDATED: Apply replacement overlay for collapsed view
+  // UPDATED: Apply replacement overlay for collapsed view
+  // Rules:
+  //  • Reps with OPEN replacement marks are bumped to the top (FIFO) and shown as positions 1..N
+  //  • All other reps KEEP their true "nextPosition" number (so gaps like "15. Andrej" are preserved)
+  //  • Only one row per rep (first appearance semantics)
   const overlayCollapsed = (items: RotationItem[], lane: 'sub1k' | '1kplus'): RotationItem[] => {
     try {
       const openOrder = getOpenRepOrder(lane);
       if (openOrder.length === 0) {
+        // No overlay: keep original nextPosition numbers as displayPosition
         return items.map((item, index) => ({
           ...item,
-          displayPosition: index + 1,
+          displayPosition: item.nextPosition,
           isNext: index === 0
         }));
       }
 
-      // Create a map for quick lookup
-      const itemsByRepId = new Map(items.map(item => [item.repId, item]));
-      
-      // Build final order: open reps first, then remaining reps
+      const itemsByRepId = new Map(items.map(i => [i.repId, i]));
+      const openIndex = new Map(openOrder.map((id, idx) => [id, idx])); // repId -> 0-based open rank
+
+      // Compose: open reps first (tagged), then remaining reps in their existing order
       const finalItems: RotationItem[] = [];
-      
-      // Add open reps first (in FIFO order)
+
       openOrder.forEach(repId => {
-        const item = itemsByRepId.get(repId);
-        if (item) {
+        const base = itemsByRepId.get(repId);
+        if (base) {
           finalItems.push({
-            ...item,
+            ...base,
             hasOpenReplacements: true
           });
         }
       });
-      
-      // Add remaining reps
+
       items.forEach(item => {
-        if (!openOrder.includes(item.repId)) {
+        if (!openIndex.has(item.repId)) {
           finalItems.push(item);
         }
       });
-      
-      // Renumber display positions and set next
+
+      // Assign displayPosition:
+      //  – Open reps get 1..N
+      //  – Everyone else keeps their true nextPosition
       return finalItems.map((item, index) => ({
         ...item,
-        displayPosition: index + 1,
+        displayPosition: openIndex.has(item.repId)
+          ? (openIndex.get(item.repId)! + 1)
+          : item.nextPosition,
         isNext: index === 0
       }));
     } catch (error) {
@@ -360,7 +368,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     }
   };
 
-  // FIXED: Simplified overlay expanded logic
+  // UPDATED: Apply replacement overlay for expanded view
   const overlayExpanded = (expandedItems: RotationItem[], lane: 'sub1k' | '1kplus'): RotationItem[] => {
     try {
       const openOrder = getOpenRepOrder(lane);
@@ -373,36 +381,26 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       }
 
       // For expanded view, we want to show the reps with open replacements at the top
-      // but still maintain the full sequence
+      // then continue with the normal sequence
       const openRepIds = new Set(openOrder);
-      const openItems: RotationItem[] = [];
-      const regularItems: RotationItem[] = [];
+      const finalItems: RotationItem[] = [];
       
-      // Separate items into open and regular
-      expandedItems.forEach(item => {
-        if (openRepIds.has(item.repId)) {
-          // Only add the first occurrence of each open rep to the top
-          if (!openItems.some(oi => oi.repId === item.repId)) {
-            openItems.push({
-              ...item,
-              hasOpenReplacements: true
-            });
-          }
-          
-        } else {
-          regularItems.push(item);
+      // Add open reps first (in chronological order)
+      openOrder.forEach(repId => {
+        const item = expandedItems.find(ei => ei.repId === repId);
+        if (item) {
+          finalItems.push({
+            ...item,
+            hasOpenReplacements: true
+          });
         }
       });
       
-      // Sort open items by original mark time order
-      openItems.sort((a, b) => {
-        const aIndex = openOrder.indexOf(a.repId);
-        const bIndex = openOrder.indexOf(b.repId);
-        return aIndex - bIndex;
+      // Add remaining items from expanded sequence, skipping duplicates
+      // Add the full expanded sequence (including open reps again so "everything in between" is visible)
+      expandedItems.forEach(item => {
+        finalItems.push(item);
       });
-      
-      // Combine: open items first, then regular sequence
-      const finalItems = [...openItems, ...regularItems];
       
       // Renumber display positions
       return finalItems.map((item, index) => ({
@@ -455,7 +453,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       leadCounts.get(rep.id) === leastLeadsCount
     ).map(rep => rep.name);
     
-    // FIXED: Safer replacement counting
+    // Count replacement statistics
     let leadsNeedingReplacement = 0;
     try {
       const openSub = filterOpenMarksByTime(replacementState, 'sub1k' as any, timeFilter as any, new Date());
@@ -497,7 +495,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       console.error('Error generating sub1k items:', error);
       return [];
     }
-  }, [rotationState.normalRotationSub1k, leadEntries, leads, timeFilter, salesReps]);
+  }, [rotationState.normalRotationSub1k, leadEntries, leads, timeFilter, salesReps, replacementState]);
 
   const over1kItems = useMemo(() => {
     try {
@@ -506,7 +504,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       console.error('Error generating over1k items:', error);
       return [];
     }
-  }, [rotationState.normalRotationOver1k, leadEntries, leads, timeFilter, salesReps]);
+  }, [rotationState.normalRotationOver1k, leadEntries, leads, timeFilter, salesReps, replacementState]);
 
   const sub1kExpanded = useMemo(() => {
     try {
@@ -515,7 +513,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       console.error('Error generating sub1k expanded:', error);
       return [];
     }
-  }, [rotationState.normalRotationSub1k, leadEntries, leads, timeFilter, salesReps, visiblePositions]);
+  }, [rotationState.normalRotationSub1k, leadEntries, leads, timeFilter, salesReps, visiblePositions, replacementState]);
 
   const over1kExpanded = useMemo(() => {
     try {
@@ -524,9 +522,9 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       console.error('Error generating over1k expanded:', error);
       return [];
     }
-  }, [rotationState.normalRotationOver1k, leadEntries, leads, timeFilter, salesReps, visiblePositions]);
+  }, [rotationState.normalRotationOver1k, leadEntries, leads, timeFilter, salesReps, visiblePositions, replacementState]);
 
-  // FIXED: Apply replacement overlay with error handling
+  // Apply replacement overlay with error handling
   const sub1kItemsOverlayed = useMemo(() => {
     try {
       return overlayCollapsed(sub1kItems, 'sub1k');
@@ -579,7 +577,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     }
   }, [sub1kItemsOverlayed, over1kItemsOverlayed, rotationState, onUpdateRotation]);
 
-  // FIXED: Enhanced rotation item rendering with replacement indicators
+  // Enhanced rotation item rendering with replacement indicators and explicit "Replacement" suffix
   const renderRotationItem = (item: RotationItem) => (
     <div 
       key={`${item.repId}-${item.nextPosition}`}
@@ -627,7 +625,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
             {item.hits} hit{item.hits !== 1 ? 's' : ''}
           </span>
           <div className="hidden group-hover:block absolute right-0 bottom-6 w-64 px-3 py-2 bg-black text-white text-xs rounded whitespace-normal z-20">
-            Hits are triggers that cause a Sales Rep to get bumped down to their next turn. Hits include adding a Skip or a Lead to a Sales Rep's cell.
+            Hits are triggers that cause a Sales Rep to get bumped down to their next turn. Hits include adding a Skip or a Lead to a Sales Rep's cell. Leads marked for replacement do not count as hits.
           </div>
         </div>
         <div className="group relative">
@@ -641,6 +639,91 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       </div>
     </div>
   );
+  /**
+   * Build the top "Replacement queue" list for expanded view.
+   * Numbering is local (1..N), no "Next" badge, always shows the orange "Needs Replacement" chip.
+   */
+  const buildReplacementQueueItems = (
+    lane: 'sub1k' | '1kplus',
+    expandedItems: RotationItem[],
+    collapsedItems: RotationItem[]
+  ): RotationItem[] => {
+    const openIds = getOpenRepOrder(lane); // FIFO repId[]
+    if (!openIds.length) return [];
+
+    // Quick lookup from either expanded or collapsed lists
+    const byRep = new Map<string, RotationItem>();
+    [...expandedItems, ...collapsedItems].forEach(i => byRep.set(i.repId, i));
+
+    return openIds.map((repId, idx) => {
+      const base = byRep.get(repId);
+      if (base) {
+        return {
+          ...base,
+          // Local numbering 1..N for the queue
+          displayPosition: idx + 1,
+          // Guard against key collisions in renderRotationItem (which keys by nextPosition)
+          nextPosition: -1000 - idx,
+          isNext: false,
+          hasOpenReplacements: true,
+        };
+      }
+      // Fallback if rep isn’t in the visible windows yet
+      const rep = salesReps.find(r => r.id === repId);
+      const baseOrder = lane === 'sub1k'
+        ? rotationState.normalRotationSub1k
+        : rotationState.normalRotationOver1k;
+      return {
+        repId,
+        name: rep?.name ?? 'Unknown',
+        originalPosition: Math.max(1, baseOrder.indexOf(repId) + 1),
+        hits: 0,
+        nextPosition: -1100 - idx,
+        displayPosition: idx + 1,
+        isNext: false,
+        hasOpenReplacements: true,
+      };
+    });
+  };
+
+  /**
+   * Build the "Original Order" section for expanded view.
+   * Numbering continues AFTER the expanded list length (offset).
+   * These are reference rows only (no "Next", no replacement chip).
+   */
+  const buildOriginalOrderItems = (
+    baseOrder: string[],
+    offset: number,
+    sampleItems: RotationItem[]
+  ): RotationItem[] => {
+    if (!baseOrder?.length) return [];
+    const byRep = new Map<string, RotationItem>();
+    sampleItems.forEach(i => byRep.set(i.repId, i));
+
+    return baseOrder.map((repId, idx) => {
+      const base = byRep.get(repId);
+      if (base) {
+        return {
+          ...base,
+          displayPosition: offset + idx + 1,
+          nextPosition: -2000 - idx, // avoid key collisions
+          isNext: false,
+          hasOpenReplacements: false,
+        };
+      }
+      const rep = salesReps.find(r => r.id === repId);
+      return {
+        repId,
+        name: rep?.name ?? 'Unknown',
+        originalPosition: idx + 1,
+        hits: 0,
+        nextPosition: -2100 - idx,
+        displayPosition: offset + idx + 1,
+        isNext: false,
+        hasOpenReplacements: false,
+      };
+    });
+  };
 
   // Render rotation lane
   const renderRotationLane = (
@@ -648,7 +731,9 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     items: RotationItem[],
     expandedItems: RotationItem[],
     expanded: boolean,
-    onToggleExpanded: () => void
+    onToggleExpanded: () => void,
+    lane: 'sub1k' | '1kplus',
+    baseOrder: string[]
   ) => (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -661,6 +746,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
               <div className="space-y-1">
                 <div>• Reps start in their original order (set in Rep Manager)</div>
                 <div>• Each "hit" (lead or skip) moves that rep back one full cycle</div>
+                <div>• Leads marked for replacement do not count as hits</div>
                 <div>• Reps with open replacement marks are bumped to the top</div>
                 <div>• The system shows either each rep's next turn, or the full reordered sequence</div>
                 <div>• {expanded ? 'Expanded view shows the complete upcoming rotation order' : 'Collapsed view shows when each rep comes up next'}</div>
@@ -677,21 +763,51 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
         </button>
       </div>
 
-      <div className="rounded-lg border bg-white divide-y">
+     <div className="rounded-lg border bg-white divide-y">
         {expanded ? (
           <>
-            {expandedItems.map(renderRotationItem)}
-            {expandedItems.length >= visiblePositions && (
-              <div className="p-2">
-                <button
-                  onClick={() => setVisiblePositions(prev => prev + 10)}
-                  className="w-full text-xs text-gray-600 hover:text-gray-800 py-1"
-                >
-                  <ChevronRight className="w-3 h-3 inline mr-1" />
-                  Show 10 more positions
-                </button>
+            {/* Section A: Replacement queue (FIFO, local numbering 1..N) */}
+            {(() => {
+              const repl = buildReplacementQueueItems(lane, expandedItems, items);
+              if (!repl.length) return null;
+              return (
+                <div className="px-3 py-2 border-b bg-orange-50/50">
+                  <div className="text-[10px] uppercase tracking-wide text-orange-700 font-semibold mb-1">
+                    Leads Marked for Replacement
+                  </div>
+                  {repl.map(renderRotationItem)}
+                </div>
+              );
+            })()}
+
+            {/* Section B: Full upcoming rotation (everything in between, starts at 1) */}
+            <div className="py-1">
+              <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-600 font-semibold">
+                Full Upcoming Rotation
               </div>
-            )}
+              {expandedItems.map(renderRotationItem)}
+              {expandedItems.length >= visiblePositions && (
+                <div className="p-2">
+                  <button
+                    onClick={() => setVisiblePositions(prev => prev + 10)}
+                    className="w-full text-xs text-gray-600 hover:text-gray-800 py-1"
+                  >
+                    <ChevronRight className="w-3 h-3 inline mr-1" />
+                    Show 10 more positions
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Section C: Original Order (continues numbering after Section B) */}
+            <div className="px-3 py-2 border-t">
+              <div className="text-[10px] uppercase tracking-wide text-gray-600 font-semibold mb-1">
+                Original Order
+              </div>
+              {buildOriginalOrderItems(baseOrder, expandedItems.length, [...expandedItems, ...items]).map(
+                renderRotationItem
+              )}
+            </div>
           </>
         ) : (
           items.map(renderRotationItem)
@@ -771,6 +887,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
         <div className="text-xs text-blue-700 mb-1 font-medium">Rotation Algorithm:</div>
         <div className="text-xs text-blue-600 space-y-1">
           <div>• Each hit moves rep back one full cycle</div>
+          <div>• Leads marked for replacement do not count as hits</div>
           <div>• Reps with open replacement marks are prioritized to the top</div>
           <div>• Sub 1K and 1K+ rotations are completely separate</div>
           <div>• Formula: Next Position = Original + (Hits × Cycle Size)</div>
@@ -783,21 +900,26 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
 
       {/* Rotation Lanes */}
       <div className="space-y-4">
-        {renderRotationLane(
+          {renderRotationLane(
           'Sub 1K Rotation',
           sub1kItemsOverlayed,
           sub1kExpandedOverlayed,
           expandedSub1k,
-          () => setExpandedSub1k(!expandedSub1k)
+          () => setExpandedSub1k(!expandedSub1k),
+          'sub1k',
+          rotationState.normalRotationSub1k
         )}
         
         {renderRotationLane(
           '1K+ Rotation',
           over1kItemsOverlayed,
-          over1kExpandedOverlayed, 
-          expandedOver1k,       
-          () => setExpandedOver1k(!expandedOver1k)
+          over1kExpandedOverlayed,
+          expandedOver1k,
+          () => setExpandedOver1k(!expandedOver1k),
+          '1kplus',
+          rotationState.normalRotationOver1k
         )}
+
       </div>
 
       {/* Enhanced Summary Stats */}

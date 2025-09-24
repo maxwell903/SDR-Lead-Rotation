@@ -41,7 +41,7 @@ const getCurrentEST = (): Date => {
   return est;
 };
 
-// Calculate who's next based on hit counts (skips + qualifying leads)
+// UPDATED: Calculate who's next based on hit counts (skips + qualifying leads) - excludes marked leads
 const calculateNextInRotation = (
   baseOrder: string[], 
   entries: LeadEntry[], 
@@ -57,11 +57,11 @@ const calculateNextInRotation = (
   // Initialize all reps with 0 hits
   baseOrder.forEach(repId => hits.set(repId, 0));
   
-  // Track closed original leads that shouldn't count as hits
-  const closedOriginalLeadIds = new Set<string>();
-  for (const rec of Object.values(replacementState.byLeadId)) {
-    if (rec.replacedByLeadId) {
-      closedOriginalLeadIds.add(rec.leadId);
+  // UPDATED: Track ALL marked leads, not just closed ones
+  const markedLeadIds = new Set<string>();
+  for (const rec of Object.values(replacementState.byLeadId || {})) {
+    if (rec && rec.leadId) {
+      markedLeadIds.add(rec.leadId);
     }
   }
   
@@ -76,9 +76,9 @@ const calculateNextInRotation = (
       // Each skip counts as a hit
       hits.set(entry.repId, (hits.get(entry.repId) || 0) + 1);
     } else if (entry.type === 'lead' && entry.leadId) {
-      // Skip counting the original lead if it has been replaced
-      if (closedOriginalLeadIds.has(entry.leadId)) {
-        return;
+      // UPDATED: Skip counting ANY marked lead (open or closed)
+      if (markedLeadIds.has(entry.leadId)) {
+        return; // Don't count marked leads as hits
       }
       
       // Lead counts as hit if it qualifies for this lane
@@ -585,10 +585,10 @@ export default function App() {
     return null;
   };
 
-
   const handleRemoveReplacementMark = (leadId: string) => {
-  setReplacementState(prev => removeLeadMark(prev, leadId));
-};
+    setReplacementState(prev => removeLeadMark(prev, leadId));
+  };
+
   const handleUpdateEntry = (entryId: string, updatedData: any) => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     
@@ -624,7 +624,6 @@ export default function App() {
           }
         };
       }
-
 
       // Handle lead entry updates
       const oldAssignedRepId = existingEntry.repId;
