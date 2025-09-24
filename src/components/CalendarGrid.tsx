@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Trash2, Edit, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
-import { SalesRep, LeadEntry, RotationState } from '../types';
+import { Trash2, Edit, ZoomIn, ZoomOut, RotateCcw, ExternalLink } from 'lucide-react';
+import { SalesRep, LeadEntry, RotationState, Lead } from '../types';
 
 interface CalendarGridProps {
   salesReps: SalesRep[];
@@ -11,6 +11,7 @@ interface CalendarGridProps {
   onCellClick: (day: number, repId: string) => void;
   onDeleteEntry: (entryId: string) => void;
   onEditEntry: (entry: LeadEntry) => void;
+  leads: Lead[];
 }
 
 const CalendarGrid: React.FC<CalendarGridProps> = ({ 
@@ -21,7 +22,8 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   currentDay,
   onCellClick,
   onDeleteEntry,
-  onEditEntry 
+  onEditEntry,
+  leads
 }) => {
   // State management
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -87,6 +89,52 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
       case 2: return 'nd';
       case 3: return 'rd';
       default: return 'th';
+    }
+  };
+
+  // Function to find lead data for an entry
+  const getLeadForEntry = (entry: LeadEntry): Lead | null => {
+    if (entry.type === 'lead' && entry.leadId) {
+      return leads.find(lead => lead.id === entry.leadId) || null;
+    }
+    return null;
+  };
+
+  // Function to get URL for an entry
+  const getEntryUrl = (entry: LeadEntry): string | null => {
+    // First try the entry's URL
+    if (entry.url) {
+      return entry.url;
+    }
+    
+    // Then try to find the associated lead's URL
+    const associatedLead = getLeadForEntry(entry);
+    if (associatedLead && associatedLead.url) {
+      return associatedLead.url;
+    }
+    
+    return null;
+  };
+
+  // Function to handle hyperlink clicks
+  const handleHyperlinkClick = (e: React.MouseEvent, entry: LeadEntry) => {
+    e.stopPropagation(); // Prevent triggering cell click
+    
+    const url = getEntryUrl(entry);
+    if (url) {
+      // Ensure URL has protocol
+      const fullUrl = url.startsWith('http://') || url.startsWith('https://') 
+        ? url 
+        : `https://${url}`;
+      
+      try {
+        window.open(fullUrl, '_blank', 'noopener,noreferrer');
+      } catch (error) {
+        console.error('Error opening URL:', error);
+        alert('Could not open URL. Please check the link format.');
+      }
+    } else {
+      alert('No URL available for this entry.');
     }
   };
 
@@ -221,6 +269,43 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
         return 'text-blue-700 bg-blue-50 border-blue-200';
       default:
         return 'text-gray-700 bg-gray-50 border-gray-200';
+    }
+  };
+
+  // Function to render entry content with hyperlink support
+  const renderEntryContent = (entry: LeadEntry) => {
+    if (entry.type === 'lead') {
+      const entryUrl = getEntryUrl(entry);
+      
+      return (
+        <div className="text-xs">
+          <div className="font-medium truncate flex items-center">
+            {entryUrl ? (
+              <button
+                onClick={(e) => handleHyperlinkClick(e, entry)}
+                className="text-blue-600 hover:text-blue-800 underline hover:no-underline transition-colors flex items-center space-x-1 truncate"
+                title={`Click to open: ${entryUrl}`}
+              >
+                <span className="truncate">{entry.value}</span>
+                <ExternalLink className="w-3 h-3 flex-shrink-0" />
+              </button>
+            ) : (
+              <span className="truncate">{entry.value}</span>
+            )}
+          </div>
+          {entry.unitCount && (
+            <div className="text-gray-500">
+              {entry.unitCount} unit{entry.unitCount !== 1 ? 's' : ''}
+            </div>
+          )}
+        </div>
+      );
+    } else {
+      return (
+        <span className="font-medium text-sm">
+          {entry.value}
+        </span>
+      );
     }
   };
 
@@ -385,6 +470,10 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
               <div className="flex items-center space-x-1">
                 <div className="w-3 h-3 bg-green-100 border border-green-200 rounded"></div>
                 <span>Next</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <ExternalLink className="w-3 h-3 text-blue-600" />
+                <span>Clickable Link</span>
               </div>
             </div>
           </div>
@@ -556,22 +645,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                               className={`entry-item group flex items-center justify-between p-1 rounded border transition-all duration-200 ${getEntryTypeStyle(entry.type)}`}
                             >
                               <div className="flex-1 min-w-0">
-                                {entry.type === 'lead' ? (
-                                  <div className="text-xs">
-                                    <div className="font-medium truncate">
-                                      {entry.value}
-                                    </div>
-                                    {entry.unitCount && (
-                                      <div className="text-gray-500">
-                                        {entry.unitCount} unit{entry.unitCount !== 1 ? 's' : ''}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="font-medium text-sm">
-                                    {entry.value}
-                                  </span>
-                                )}
+                                {renderEntryContent(entry)}
                               </div>
                               
                               <div className="hidden group-hover:flex items-center space-x-1 ml-2">
@@ -626,22 +700,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                               className={`entry-item group flex items-center justify-between p-1 rounded border transition-all duration-200 ${getEntryTypeStyle(entry.type)}`}
                             >
                               <div className="flex-1 min-w-0">
-                                {entry.type === 'lead' ? (
-                                  <div className="text-xs">
-                                    <div className="font-medium truncate">
-                                      {entry.value}
-                                    </div>
-                                    {entry.unitCount && (
-                                      <div className="text-gray-500">
-                                        {entry.unitCount} unit{entry.unitCount !== 1 ? 's' : ''}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="font-medium text-sm">
-                                    {entry.value}
-                                  </span>
-                                )}
+                                {renderEntryContent(entry)}
                               </div>
                               
                               <div className="hidden group-hover:flex items-center space-x-1 ml-2">
@@ -687,7 +746,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
               <strong> Cell Width:</strong> {columnWidth}px
             </div>
             <div className="text-xs text-gray-500">
-              Click any cell to add an entry • Hover over entries to edit or delete • Use controls to adjust view
+              Click any cell to add an entry • Hover over entries to edit or delete • Click account numbers to open URLs • Use controls to adjust view
             </div>
           </div>
         </div>

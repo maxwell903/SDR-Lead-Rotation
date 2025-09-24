@@ -320,6 +320,13 @@ export default function App() {
     const year = currentDate.getFullYear();
     const monthKey = `${year}-${month}`;
 
+    // Handle updates to existing entries
+    if (leadData.isEditing && leadData.editingEntryId) {
+      handleUpdateEntry(leadData.editingEntryId, leadData);
+      return;
+    }
+
+    // Handle new entries
     if (leadData.type && leadData.type !== 'lead') {
       // Handle non-lead entries (skip, ooo, next)
       const newEntry: LeadEntry = {
@@ -333,8 +340,7 @@ export default function App() {
         month,
         year,
         unitCount: undefined,
-        // UPDATED: Set rotationTarget for non-lead entries based on leadData
-        rotationTarget: leadData.rotationTarget || 'both' // Default to 'both' for backwards compatibility
+        rotationTarget: leadData.rotationTarget || 'both'
       };
       
       const updatedData = {
@@ -387,9 +393,7 @@ export default function App() {
       leadId: newLead.id,
       month,
       year,
-      // UPDATED: Store unitCount in the entry for calendar display logic
       unitCount: newLead.unitCount,
-      // UPDATED: Set rotationTarget based on unit count 
       rotationTarget: newLead.unitCount >= 1000 ? 'over1k' : 'sub1k'
     };
 
@@ -468,40 +472,105 @@ export default function App() {
     
     setMonthlyData(prev => {
       const currentData = prev[monthKey] || currentMonthData;
+      const existingEntry = currentData.entries.find(e => e.id === entryId);
       
+      if (!existingEntry) {
+        console.error('Entry not found for update:', entryId);
+        return prev;
+      }
+
+      // Handle non-lead entry updates
+      if (updatedData.type !== 'lead') {
+        const updatedEntries = currentData.entries.map(entry => {
+          if (entry.id === entryId) {
+            return {
+              ...entry,
+              repId: updatedData.assignedTo || entry.repId,
+              value: updatedData.type.toUpperCase(),
+              rotationTarget: (updatedData.rotationTarget as 'sub1k' | 'over1k' | 'both' | undefined) || entry.rotationTarget,
+              comments: updatedData.comments || entry.comments
+            };
+          }
+          return entry;
+        });
+
+        return {
+          ...prev,
+          [monthKey]: {
+            ...currentData,
+            entries: updatedEntries
+          }
+        };
+      }
+
+      // Handle lead entry updates
+      const oldAssignedRepId = existingEntry.repId;
+      const newAssignedRepId = updatedData.assignedTo;
+      const assignmentChanged = oldAssignedRepId !== newAssignedRepId;
+
+      // Create updated lead
+      const updatedLead: Lead = existingEntry.leadId ? {
+        id: existingEntry.leadId,
+        accountNumber: updatedData.accountNumber,
+        url: updatedData.url,
+        propertyTypes: updatedData.propertyTypes,
+        unitCount: updatedData.unitCount,
+        assignedTo: newAssignedRepId,
+        date: new Date(),
+        comments: updatedData.comments || [],
+        month: currentData.month,
+        year: currentData.year
+      } : {
+        // Create new lead if one doesn't exist (shouldn't happen but safety check)
+        id: Date.now().toString(),
+        accountNumber: updatedData.accountNumber,
+        url: updatedData.url,
+        propertyTypes: updatedData.propertyTypes,
+        unitCount: updatedData.unitCount,
+        assignedTo: newAssignedRepId,
+        date: new Date(),
+        comments: updatedData.comments || [],
+        month: currentData.month,
+        year: currentData.year
+      };
+
       // Update the entry
       const updatedEntries = currentData.entries.map(entry => {
         if (entry.id === entryId) {
           return {
             ...entry,
-            value: updatedData.accountNumber || entry.value,
-            url: updatedData.url || entry.url,
-            comments: updatedData.comments || entry.comments,
-            // UPDATED: Update unitCount and rotationTarget when entry is updated
-            unitCount: updatedData.unitCount !== undefined ? updatedData.unitCount : entry.unitCount,
-            rotationTarget: updatedData.unitCount !== undefined 
-              ? (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k')
-              : entry.rotationTarget
+            repId: newAssignedRepId,
+            value: updatedLead.accountNumber,
+            url: updatedLead.url,
+            comments: updatedLead.comments,
+            unitCount: updatedLead.unitCount,
+            rotationTarget: (updatedLead.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k',
+            leadId: updatedLead.id
           };
         }
         return entry;
       });
 
-      // Update the associated lead if it exists
-      const updatedLeads = currentData.leads.map(lead => {
-        const entry = currentData.entries.find(e => e.id === entryId);
-        if (entry && lead.id === entry.leadId) {
-          return {
-            ...lead,
-            accountNumber: updatedData.accountNumber || lead.accountNumber,
-            url: updatedData.url || lead.url,
-            propertyTypes: updatedData.propertyTypes || lead.propertyTypes,
-            unitCount: updatedData.unitCount || lead.unitCount,
-            comments: updatedData.comments || lead.comments,
-          };
-        }
-        return lead;
-      });
+      // Update or add the lead
+      let updatedLeads;
+      if (existingEntry.leadId) {
+        // Update existing lead
+        updatedLeads = currentData.leads.map(lead => 
+          lead.id === existingEntry.leadId ? updatedLead : lead
+        );
+      } else {
+        // Add new lead (shouldn't happen but safety check)
+        updatedLeads = [...currentData.leads, updatedLead];
+      }
+
+      // If assignment changed, we need to update rotation logic
+      if (assignmentChanged) {
+        // The rotation state will be recalculated by the useEffect
+        // but we can trigger a re-render to ensure it happens
+        setTimeout(() => {
+          updateRotationAfterAssignment(newAssignedRepId, updatedLead.unitCount >= 1000);
+        }, 0);
+      }
 
       return {
         ...prev,
@@ -512,6 +581,11 @@ export default function App() {
         }
       };
     });
+
+    // Close modal and reset state
+    setShowLeadModal(false);
+    setSelectedCell(null);
+    setEditingEntry(null);
   };
 
   const getCurrentDay = (): number => {
@@ -594,6 +668,7 @@ export default function App() {
               onCellClick={handleCellClick}
               onDeleteEntry={handleDeleteEntry}
               onEditEntry={handleEditEntry}
+              leads={currentMonthData.leads}
             />
           </div>
           
@@ -616,21 +691,14 @@ export default function App() {
             setSelectedCell(null);
             setEditingEntry(null);
           }}
-          onSave={editingEntry ? 
-            (data) => {
-              handleUpdateEntry(editingEntry.id, data);
-              setShowLeadModal(false);
-              setSelectedCell(null);
-              setEditingEntry(null);
-            } : 
-            handleAddLead
-          }
+          onSave={handleAddLead}
           salesReps={salesReps}
           selectedCell={selectedCell}
           editingEntry={editingEntry}
           rotationState={rotationState}
           getEligibleReps={getEligibleReps}
           getNextInRotation={getNextInRotation}
+          leads={currentMonthData.leads}
         />
       )}
 

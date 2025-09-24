@@ -10,6 +10,8 @@ interface LeadModalProps {
   rotationState: RotationState;
   getEligibleReps: (leadData: any) => SalesRep[];
   getNextInRotation: (leadData: any) => string | null;
+  // Add leads array to access lead data when editing
+  leads?: any[];
 }
 
 const LeadModal: React.FC<LeadModalProps> = ({ 
@@ -20,101 +22,138 @@ const LeadModal: React.FC<LeadModalProps> = ({
   editingEntry,
   rotationState,
   getEligibleReps,
-  getNextInRotation
+  getNextInRotation,
+  leads = []
 }) => {
   const [formData, setFormData] = useState({
-    accountNumber: editingEntry?.value || '',
-    url: editingEntry?.url || '',
+    accountNumber: '',
+    url: '',
     propertyTypes: [] as string[],
-    unitCount: editingEntry?.unitCount || 0,
-    comments: editingEntry?.comments || [],
+    unitCount: 0,
+    comments: [] as string[],
     assignedTo: ''
   });
 
   const [newComment, setNewComment] = useState('');
-  const [entryType, setEntryType] = useState<'lead' | 'skip' | 'ooo' | 'next'>(
-    editingEntry?.type || 'lead'
-  );
+  const [entryType, setEntryType] = useState<'lead' | 'skip' | 'ooo' | 'next'>('lead');
   const [rotationTarget, setRotationTarget] = useState<'sub1k' | 'over1k' | 'both'>('sub1k');
   const [eligibleReps, setEligibleReps] = useState<SalesRep[]>([]);
   const [nextRep, setNextRep] = useState<string>('');
   const [unitCountFocused, setUnitCountFocused] = useState(false);
 
   const propertyTypeOptions = ['MFH', 'MF', 'SFH', 'Commercial'];
+  const isEditing = !!editingEntry;
 
   // Check if the selected rep can handle 1K+ (for showing rotation toggle)
   const selectedRep = selectedCell ? salesReps.find(rep => rep.id === selectedCell.repId) : null;
   const canHandle1kPlus = selectedRep?.parameters.canHandle1kPlus || false;
 
-  // UPDATED: Initialize form data for editing
+  // Initialize form data when editing - run only once when modal opens
   useEffect(() => {
-    if (editingEntry && editingEntry.type === 'lead') {
-      // Find the associated lead data to populate property types
-      // For now, we'll use default values since we don't have direct access to lead data
-      // This could be improved by passing lead data to the modal
-      setFormData(prev => ({
-        ...prev,
-        accountNumber: editingEntry.value || '',
-        url: editingEntry.url || '',
-        unitCount: editingEntry.unitCount || 0,
-        comments: editingEntry.comments || [],
-        assignedTo: editingEntry.repId,
-        // Note: propertyTypes would need to be reconstructed from the associated lead
-      }));
-    }
-    
-    // Initialize rotationTarget from existing entry or based on rep capabilities
-    if (editingEntry?.rotationTarget) {
-      setRotationTarget(editingEntry.rotationTarget);
-    } else if (canHandle1kPlus) {
-      // If editing and rep can handle both, determine based on unit count
-      if (editingEntry?.unitCount && editingEntry.unitCount >= 1000) {
-        setRotationTarget('over1k');
+    if (editingEntry) {
+      // Set the entry type
+      setEntryType(editingEntry.type);
+      
+      if (editingEntry.type === 'lead') {
+        // Find the associated lead data
+        const associatedLead = leads.find(lead => lead.id === editingEntry.leadId);
+        
+        if (associatedLead) {
+          setFormData({
+            accountNumber: associatedLead.accountNumber || editingEntry.value,
+            url: associatedLead.url || editingEntry.url || '',
+            propertyTypes: associatedLead.propertyTypes || [],
+            unitCount: associatedLead.unitCount || editingEntry.unitCount || 0,
+            comments: associatedLead.comments || editingEntry.comments || [],
+            assignedTo: associatedLead.assignedTo || editingEntry.repId
+          });
+        } else {
+          // Fallback if lead data not found
+          setFormData({
+            accountNumber: editingEntry.value || '',
+            url: editingEntry.url || '',
+            propertyTypes: [], // Will need to be set manually
+            unitCount: editingEntry.unitCount || 0,
+            comments: editingEntry.comments || [],
+            assignedTo: editingEntry.repId
+          });
+        }
       } else {
-        setRotationTarget('sub1k');
+        // For non-lead entries (skip, ooo, next)
+        setFormData(prev => ({
+          ...prev,
+          assignedTo: editingEntry.repId
+        }));
+      }
+      
+      // Set rotation target from existing entry
+      if (editingEntry.rotationTarget) {
+        setRotationTarget(editingEntry.rotationTarget);
+      } else {
+        // Determine based on unit count or rep capabilities
+        if (editingEntry.unitCount && editingEntry.unitCount >= 1000) {
+          setRotationTarget('over1k');
+        } else if (selectedRep?.parameters.canHandle1kPlus && editingEntry.type !== 'lead') {
+          setRotationTarget('sub1k'); // Default for non-lead entries
+        }
+      }
+    } else {
+      // Initialize for new entry
+      setFormData({
+        accountNumber: '',
+        url: '',
+        propertyTypes: [],
+        unitCount: 0,
+        comments: [],
+        assignedTo: selectedCell?.repId || ''
+      });
+      
+      if (selectedRep?.parameters.canHandle1kPlus) {
+        setRotationTarget('sub1k'); // Default to sub1k
       }
     }
-  }, [editingEntry, canHandle1kPlus]);
+  }, [editingEntry?.id]); // Only depend on editingEntry ID to avoid constant resets
 
-  // Update eligible reps and next rep when form data changes
+  // Update eligible reps and next rep when form data changes (but avoid interfering with typing)
   useEffect(() => {
     if (entryType === 'lead' && formData.propertyTypes.length > 0) {
       const eligible = getEligibleReps(formData);
       setEligibleReps(eligible);
       
+      // Calculate next for display
       const next = getNextInRotation(formData);
       setNextRep(next || '');
       
-      if (!formData.assignedTo && next) {
+      // Only auto-assign next rep for NEW entries if no rep is currently assigned
+      if (!isEditing && !formData.assignedTo && next) {
         setFormData(prev => ({ ...prev, assignedTo: next }));
       }
     } else {
       setEligibleReps([]);
       setNextRep('');
     }
-  }, [formData.propertyTypes, formData.unitCount, entryType, getEligibleReps, getNextInRotation]);
+  }, [formData.propertyTypes.length, formData.unitCount, entryType, isEditing]); // Reduced dependencies
 
-  // Set default next rep for sub 1k rotation
+  // Set default next rep for sub 1k rotation when creating new entries (run once)
   useEffect(() => {
-    if (entryType === 'lead' && formData.propertyTypes.length === 0) {
+    if (!isEditing && entryType === 'lead' && !formData.assignedTo) {
       const defaultNext = rotationState.nextSub1k;
       const defaultRep = salesReps.find(rep => rep.id === defaultNext);
       if (defaultRep) {
         setNextRep(defaultNext);
       }
     }
-  }, [entryType, rotationState.nextSub1k, salesReps, formData.propertyTypes.length]);
+  }, [entryType, isEditing]); // Minimal dependencies to avoid interference
 
-  // Auto-set rotation target based on unit count for leads
+  // Auto-set rotation target based on unit count for leads (only when unit count changes significantly)
   useEffect(() => {
     if (entryType === 'lead' && formData.unitCount > 0) {
-      if (formData.unitCount >= 1000) {
-        setRotationTarget('over1k');
-      } else {
-        setRotationTarget('sub1k');
+      const newTarget = formData.unitCount >= 1000 ? 'over1k' : 'sub1k';
+      if (rotationTarget !== newTarget) {
+        setRotationTarget(newTarget);
       }
     }
-  }, [formData.unitCount, entryType]);
+  }, [formData.unitCount >= 1000, entryType]); // Only trigger when crossing the 1K threshold
 
   const handlePropertyTypeChange = (type: string) => {
     setFormData(prev => ({
@@ -135,10 +174,18 @@ const LeadModal: React.FC<LeadModalProps> = ({
     }
   };
 
-  const handleUnitCountChange = (value: string) => {
+  const handleRemoveComment = (index: number) => {
     setFormData(prev => ({
       ...prev,
-      unitCount: value === '' ? 0 : parseInt(value) || 0
+      comments: prev.comments.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleUnitCountChange = (value: string) => {
+    const numValue = value === '' ? 0 : parseInt(value) || 0;
+    setFormData(prev => ({
+      ...prev,
+      unitCount: numValue
     }));
   };
 
@@ -153,30 +200,55 @@ const LeadModal: React.FC<LeadModalProps> = ({
     return salesReps.find(rep => rep.id === repId)?.name || 'Unknown';
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const validateForm = () => {
     if (entryType === 'lead') {
-      if (!formData.accountNumber || !formData.url || formData.propertyTypes.length === 0) {
-        alert('Please fill in all required fields');
-        return;
+      if (!formData.accountNumber.trim()) {
+        alert('Please enter an account number');
+        return false;
+      }
+      if (!formData.url.trim()) {
+        alert('Please enter a URL');
+        return false;
+      }
+      if (formData.propertyTypes.length === 0) {
+        alert('Please select at least one property type');
+        return false;
+      }
+      if (formData.unitCount <= 0) {
+        alert('Please enter a valid unit count');
+        return false;
       }
       if (!formData.assignedTo) {
         alert('Please select a sales representative');
-        return;
+        return false;
       }
     }
+    return true;
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
     
-    // UPDATED: Always include rotationTarget and unitCount in the saved data
-    onSave({ 
-      ...formData, 
+    if (!validateForm()) {
+      return;
+    }
+    
+    const saveData = {
+      ...formData,
       type: entryType,
-      assignedTo: entryType !== 'lead' ? (selectedCell?.repId || formData.assignedTo) : formData.assignedTo,
+      assignedTo: entryType !== 'lead' 
+        ? (selectedCell?.repId || formData.assignedTo) 
+        : formData.assignedTo,
       rotationTarget: entryType === 'lead' 
-        ? (formData.unitCount >= 1000 ? 'over1k' : 'sub1k')  // Determine based on unit count for leads
-        : (canHandle1kPlus ? rotationTarget : 'sub1k'), // Use selected target for non-leads
-      unitCount: entryType === 'lead' ? formData.unitCount : undefined
-    });
+        ? (formData.unitCount >= 1000 ? 'over1k' : 'sub1k')
+        : (canHandle1kPlus ? rotationTarget : 'sub1k'),
+      unitCount: entryType === 'lead' ? formData.unitCount : undefined,
+      // Add editing flag and entry ID for updates
+      isEditing: isEditing,
+      editingEntryId: editingEntry?.id
+    };
+    
+    onSave(saveData);
   };
 
   const getRotationTargetLabel = (target: string) => {
@@ -193,9 +265,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
       <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-semibold">
-            {editingEntry ? 'Edit Entry' : 'Add New Entry'}
+            {isEditing ? 'Edit Entry' : 'Add New Entry'}
           </h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-xl">
             ×
           </button>
         </div>
@@ -206,7 +278,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
             <select
               value={entryType}
               onChange={(e) => setEntryType(e.target.value as any)}
-              className="w-full p-2 border rounded-lg"
+              className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={isEditing} // Don't allow changing type when editing
             >
               <option value="lead">Lead</option>
               <option value="skip">Skip</option>
@@ -244,25 +317,35 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
           {entryType === 'lead' && (
             <>
-              {/* Next Rep Display */}
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <div className="text-sm font-medium text-blue-700 mb-1">
-                  Next in Rotation:
-                </div>
-                <div className="text-blue-900 font-semibold">
-                  {formData.propertyTypes.length === 0 
-                    ? `${getRepName(rotationState.nextSub1k)} (Sub 1K Default)`
-                    : nextRep 
-                      ? `${getRepName(nextRep)} ${formData.unitCount >= 1000 ? '(1K+)' : '(Sub 1K)'}`
-                      : 'No eligible rep found'
-                  }
-                </div>
-                {eligibleReps.length > 1 && (
-                  <div className="text-xs text-blue-600 mt-1">
-                    Other eligible: {eligibleReps.filter(r => r.id !== nextRep).map(r => r.name).join(', ')}
+              {/* Next Rep Display - Only show when creating new leads or when eligible reps exist */}
+              {(!isEditing || eligibleReps.length > 0) && (
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <div className="text-sm font-medium text-blue-700 mb-1">
+                    {isEditing ? 'Current Assignment:' : 'Next in Rotation:'}
                   </div>
-                )}
-              </div>
+                  <div className="text-blue-900 font-semibold">
+                    {isEditing ? (
+                      `${getRepName(formData.assignedTo)} (Currently Assigned)`
+                    ) : formData.propertyTypes.length === 0 ? (
+                      `${getRepName(rotationState.nextSub1k)} (Sub 1K Default)`
+                    ) : nextRep ? (
+                      `${getRepName(nextRep)} ${formData.unitCount >= 1000 ? '(1K+)' : '(Sub 1K)'}`
+                    ) : (
+                      'No eligible rep found'
+                    )}
+                  </div>
+                  {!isEditing && eligibleReps.length > 1 && (
+                    <div className="text-xs text-blue-600 mt-1">
+                      Other eligible: {eligibleReps.filter(r => r.id !== nextRep).map(r => r.name).join(', ')}
+                    </div>
+                  )}
+                  {isEditing && nextRep && nextRep !== formData.assignedTo && (
+                    <div className="text-xs text-orange-600 mt-1">
+                      Next in rotation would be: {getRepName(nextRep)}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium mb-2">Account Number *</label>
@@ -270,7 +353,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
                   type="text"
                   value={formData.accountNumber}
                   onChange={(e) => setFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
-                  className="w-full p-2 border rounded-lg"
+                  className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
               </div>
@@ -281,8 +364,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
                   type="url"
                   value={formData.url}
                   onChange={(e) => setFormData(prev => ({ ...prev, url: e.target.value }))}
-                  className="w-full p-2 border rounded-lg"
+                  className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
+                  placeholder="https://..."
                 />
               </div>
 
@@ -295,7 +379,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
                         type="checkbox"
                         checked={formData.propertyTypes.includes(type)}
                         onChange={() => handlePropertyTypeChange(type)}
-                        className="rounded"
+                        className="rounded text-blue-600 focus:ring-blue-500"
                       />
                       <span className="text-sm">{type}</span>
                     </label>
@@ -311,9 +395,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
                   onChange={(e) => handleUnitCountChange(e.target.value)}
                   onFocus={handleUnitCountFocus}
                   onBlur={() => setUnitCountFocused(false)}
-                  className="w-full p-2 border rounded-lg"
+                  className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
-                  min="0"
+                  min="1"
                 />
                 {formData.unitCount >= 1000 && (
                   <div className="text-xs text-orange-600 mt-1">
@@ -322,24 +406,28 @@ const LeadModal: React.FC<LeadModalProps> = ({
                 )}
               </div>
 
-              {eligibleReps.length > 0 && (
-                <div>
-                  <label className="block text-sm font-medium mb-2">Assign To *</label>
-                  <select
-                    value={formData.assignedTo}
-                    onChange={(e) => setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
-                    className="w-full p-2 border rounded-lg"
-                    required
-                  >
-                    <option value="">Select a rep...</option>
-                    {eligibleReps.map(rep => (
-                      <option key={rep.id} value={rep.id}>
-                        {rep.name} {rep.id === nextRep ? '(Next)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              {/* Always show assign to dropdown for leads */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Assign To *</label>
+                <select
+                  value={formData.assignedTo}
+                  onChange={(e) => setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
+                  className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="">Select a rep...</option>
+                  {(eligibleReps.length > 0 ? eligibleReps : salesReps.filter(rep => rep.status === 'active')).map(rep => (
+                    <option key={rep.id} value={rep.id}>
+                      {rep.name} {rep.id === nextRep ? '(Next)' : ''} {isEditing && rep.id === formData.assignedTo ? '(Current)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {isEditing && eligibleReps.length > 0 && !eligibleReps.some(rep => rep.id === formData.assignedTo) && (
+                  <div className="text-xs text-orange-600 mt-1">
+                    Warning: Currently assigned rep ({getRepName(formData.assignedTo)}) may not be eligible for these lead parameters.
+                  </div>
+                )}
+              </div>
 
               <div>
                 <label className="block text-sm font-medium mb-2">Comments</label>
@@ -349,11 +437,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
                       <span>{comment}</span>
                       <button
                         type="button"
-                        onClick={() => setFormData(prev => ({
-                          ...prev,
-                          comments: prev.comments.filter((_, i) => i !== index)
-                        }))}
-                        className="text-red-500 hover:text-red-700 text-xs"
+                        onClick={() => handleRemoveComment(index)}
+                        className="text-red-500 hover:text-red-700 text-xs font-medium"
                       >
                         Remove
                       </button>
@@ -365,7 +450,13 @@ const LeadModal: React.FC<LeadModalProps> = ({
                       value={newComment}
                       onChange={(e) => setNewComment(e.target.value)}
                       placeholder="Add a comment..."
-                      className="flex-1 p-2 border rounded-lg text-sm"
+                      className="flex-1 p-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddComment();
+                        }
+                      }}
                     />
                     <button
                       type="button"
@@ -386,7 +477,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
               <select
                 value={formData.assignedTo || selectedCell?.repId || ''}
                 onChange={(e) => setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
-                className="w-full p-2 border rounded-lg"
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 {salesReps.filter(rep => rep.status === 'active').map(rep => (
                   <option key={rep.id} value={rep.id}>
@@ -400,14 +491,14 @@ const LeadModal: React.FC<LeadModalProps> = ({
           <div className="flex space-x-3 pt-4">
             <button
               type="submit"
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700"
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
-              {editingEntry ? 'Update' : 'Save'}
+              {isEditing ? 'Update Entry' : 'Save Entry'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400"
+              className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
             >
               Cancel
             </button>
