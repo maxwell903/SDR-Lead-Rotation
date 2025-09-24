@@ -1,4 +1,4 @@
-// src/features/leadReplacement/LeadReplacement.tsx
+// src/features/leadReplacement.tsx
 import * as React from 'react';
 import type { Lead, LeadEntry, SalesRep, MonthData } from '../types';
 
@@ -38,24 +38,42 @@ const now = () => Date.now();
 
 export type MonthlyStore = Record<string, MonthData>;
 
+// FIXED: More robust lead map building with null checks
 export const buildLeadMap = (monthly: MonthlyStore): Map<string, Lead> => {
   const m = new Map<string, Lead>();
-  Object.values(monthly).forEach(({ leads }) => {
-    leads.forEach((l) => m.set(l.id, l));
-  });
+  try {
+    Object.values(monthly || {}).forEach(({ leads }) => {
+      if (leads && Array.isArray(leads)) {
+        leads.forEach((l) => {
+          if (l && l.id) {
+            m.set(l.id, l);
+          }
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Error building lead map:', error);
+  }
   return m;
 };
 
+// FIXED: More robust lead entries mapping with null checks
 export const buildLeadEntriesByLeadId = (monthly: MonthlyStore): Map<string, LeadEntry[]> => {
   const m = new Map<string, LeadEntry[]>();
-  Object.values(monthly).forEach(({ entries }) => {
-    entries.forEach((e) => {
-      if (!e.leadId) return;
-      const arr = m.get(e.leadId) || [];
-      arr.push(e);
-      m.set(e.leadId, arr);
+  try {
+    Object.values(monthly || {}).forEach(({ entries }) => {
+      if (entries && Array.isArray(entries)) {
+        entries.forEach((e) => {
+          if (!e || !e.leadId) return;
+          const arr = m.get(e.leadId) || [];
+          arr.push(e);
+          m.set(e.leadId, arr);
+        });
+      }
     });
-  });
+  } catch (error) {
+    console.error('Error building lead entries map:', error);
+  }
   return m;
 };
 
@@ -64,22 +82,36 @@ export const markLeadForReplacement = (
   state: ReplacementState,
   lead: Lead
 ): ReplacementState => {
-  if (!lead?.id) return state;
-  if (state.byLeadId[lead.id]) return state; // idempotent
-  const rec: ReplacementRecord = {
-    markId: `mark_${lead.id}`,
-    leadId: lead.id,
-    repId: lead.assignedTo,
-    lane: laneFromUnits(lead.unitCount),
-    accountNumber: lead.accountNumber,
-    url: lead.url,
-    markedAt: now(),
-    get isClosed() { return Boolean(this.replacedByLeadId); },
-  };
-  return {
-    byLeadId: { ...state.byLeadId, [lead.id]: rec },
-    queue: [...state.queue, lead.id],
-  };
+  if (!lead?.id) {
+    console.warn('Cannot mark lead for replacement: invalid lead');
+    return state;
+  }
+  
+  if (state.byLeadId[lead.id]) {
+    console.log('Lead already marked for replacement:', lead.id);
+    return state; // idempotent
+  }
+  
+  try {
+    const rec: ReplacementRecord = {
+      markId: `mark_${lead.id}`,
+      leadId: lead.id,
+      repId: lead.assignedTo,
+      lane: laneFromUnits(lead.unitCount),
+      accountNumber: lead.accountNumber || '',
+      url: lead.url,
+      markedAt: now(),
+      get isClosed() { return Boolean(this.replacedByLeadId); },
+    };
+    
+    return {
+      byLeadId: { ...state.byLeadId, [lead.id]: rec },
+      queue: [...state.queue, lead.id],
+    };
+  } catch (error) {
+    console.error('Error marking lead for replacement:', error);
+    return state;
+  }
 };
 
 /** APPLY replacement: newLead replaces originalLeadId */
@@ -88,18 +120,76 @@ export const applyReplacement = (
   originalLeadId: string,
   newLead: Lead
 ): ReplacementState => {
+  if (!originalLeadId || !newLead?.id) {
+    console.warn('Cannot apply replacement: invalid parameters');
+    return state;
+  }
+  
   const rec = state.byLeadId[originalLeadId];
-  if (!rec) return state;
-  const updated: ReplacementRecord = {
-    ...rec,
-    replacedByLeadId: newLead.id,
-    replacedAt: now(),
-    get isClosed() { return Boolean(this.replacedByLeadId); },
-  };
-  return {
-    ...state,
-    byLeadId: { ...state.byLeadId, [originalLeadId]: updated },
-  };
+  if (!rec) {
+    console.warn('Cannot apply replacement: original lead not marked for replacement');
+    return state;
+  }
+  
+  if (rec.replacedByLeadId) {
+    console.warn('Lead already has a replacement:', originalLeadId);
+    return state;
+  }
+  
+  try {
+    const updated: ReplacementRecord = {
+      ...rec,
+      replacedByLeadId: newLead.id,
+      replacedAt: now(),
+      get isClosed() { return Boolean(this.replacedByLeadId); },
+    };
+    
+    return {
+      ...state,
+      byLeadId: { ...state.byLeadId, [originalLeadId]: updated },
+    };
+  } catch (error) {
+    console.error('Error applying replacement:', error);
+    return state;
+  }
+};
+
+/** REMOVE replacement mark (unmark lead without deleting) */
+export const removeLeadMark = (
+  state: ReplacementState,
+  leadId: string
+): ReplacementState => {
+  if (!leadId) {
+    console.warn('Cannot remove mark: invalid lead ID');
+    return state;
+  }
+  
+  try {
+    const rec = state.byLeadId[leadId];
+    if (!rec) {
+      console.warn('Lead not marked for replacement:', leadId);
+      return state; // Lead wasn't marked anyway
+    }
+    
+    if (rec.replacedByLeadId) {
+      console.warn('Cannot remove mark: lead already has a replacement. Delete replacement first.');
+      return state;
+    }
+    
+    // Remove from state completely
+    const newByLeadId = { ...state.byLeadId };
+    delete newByLeadId[leadId];
+    
+    const newQueue = state.queue.filter(id => id !== leadId);
+    
+    return {
+      byLeadId: newByLeadId,
+      queue: newQueue
+    };
+  } catch (error) {
+    console.error('Error removing lead mark:', error);
+    return state;
+  }
 };
 
 /** UNDO by deleting the replacement lead (reopen original mark) */
@@ -107,20 +197,43 @@ export const undoReplacementByDeletingReplacementLead = (
   state: ReplacementState,
   replacementLeadId: string
 ): ReplacementState => {
-  const byLeadId = { ...state.byLeadId };
-  const originalId = Object.keys(byLeadId).find(
-    (orig) => byLeadId[orig].replacedByLeadId === replacementLeadId
-  );
-  if (!originalId) return state;
-  const rec = byLeadId[originalId];
-  byLeadId[originalId] = {
-    ...rec,
-    replacedByLeadId: undefined,
-    replacedAt: undefined,
-    get isClosed() { return Boolean(this.replacedByLeadId); },
-  };
-  const queue = state.queue.includes(originalId) ? state.queue : [...state.queue, originalId];
-  return { byLeadId, queue };
+  if (!replacementLeadId) {
+    console.warn('Cannot undo replacement: invalid replacement lead ID');
+    return state;
+  }
+  
+  try {
+    const byLeadId = { ...state.byLeadId };
+    const originalId = Object.keys(byLeadId).find(
+      (orig) => byLeadId[orig].replacedByLeadId === replacementLeadId
+    );
+    
+    if (!originalId) {
+      console.warn('Cannot find original lead for replacement:', replacementLeadId);
+      return state;
+    }
+    
+    const rec = byLeadId[originalId];
+    if (!rec) {
+      console.warn('Cannot find replacement record for:', originalId);
+      return state;
+    }
+    
+    byLeadId[originalId] = {
+      ...rec,
+      replacedByLeadId: undefined,
+      replacedAt: undefined,
+      get isClosed() { return Boolean(this.replacedByLeadId); },
+    };
+    
+    // Ensure the original is back in the queue if not already there
+    const queue = state.queue.includes(originalId) ? state.queue : [...state.queue, originalId];
+    
+    return { byLeadId, queue };
+  } catch (error) {
+    console.error('Error undoing replacement:', error);
+    return state;
+  }
 };
 
 /** Delete guard rules */
@@ -128,24 +241,35 @@ export function canDeleteLead(
   state: ReplacementState,
   leadId: string
 ): { allowed: boolean; reason?: string; isOriginalWithClosedReplacement?: boolean } {
-  const rec = state.byLeadId[leadId]; // original?
-  if (rec) {
-    if (rec.replacedByLeadId) {
-      return {
-        allowed: false,
-        reason:
-          'This lead was marked for replacement and already has a replacement. Delete the replacement lead first to unlock this one.',
-        isOriginalWithClosedReplacement: true,
-      };
-    }
+  if (!leadId || !state) {
     return { allowed: true };
   }
-  // is this a replacement?
-  const wasReplacementFor = Object.values(state.byLeadId).find(
-    (r) => r.replacedByLeadId === leadId
-  );
-  if (wasReplacementFor) return { allowed: true };
-  return { allowed: true };
+  
+  try {
+    const rec = state.byLeadId[leadId]; // original?
+    if (rec) {
+      if (rec.replacedByLeadId) {
+        return {
+          allowed: false,
+          reason:
+            'This lead was marked for replacement and already has a replacement. Delete the replacement lead first to unlock this one.',
+          isOriginalWithClosedReplacement: true,
+        };
+      }
+      return { allowed: true };
+    }
+    
+    // is this a replacement?
+    const wasReplacementFor = Object.values(state.byLeadId || {}).find(
+      (r) => r && r.replacedByLeadId === leadId
+    );
+    
+    if (wasReplacementFor) return { allowed: true };
+    return { allowed: true };
+  } catch (error) {
+    console.error('Error checking delete permissions:', error);
+    return { allowed: true }; // Fail open
+  }
 }
 
 /** Build dropdown options for the Replace Lead toggle (usually open marks only) */
@@ -156,26 +280,43 @@ export function buildReplacementOptions(
   { includeClosed = false }: { includeClosed?: boolean } = {}
 ): Array<{ leadId: string; repId: string; repName: string; accountNumber: string; url?: string; lane: RotationLane; markedAt: number }> {
   const options: Array<{ leadId: string; repId: string; repName: string; accountNumber: string; url?: string; lane: RotationLane; markedAt: number }> = [];
-  const leadMap = buildLeadMap(monthly);
+  
+  try {
+    const leadMap = buildLeadMap(monthly || {});
+    const repsMap = new Map(salesReps.map(r => [r.id, r.name]));
 
-  state.queue.forEach((leadId) => {
-    const rec = state.byLeadId[leadId];
-    if (!rec) return;
-    if (!includeClosed && rec.replacedByLeadId) return;
-    const repName = salesReps.find((r) => r.id === rec.repId)?.name ?? rec.repId;
-    const lead = leadMap.get(leadId);
-    options.push({
-      leadId,
-      repId: rec.repId,
-      repName,
-      accountNumber: rec.accountNumber || lead?.accountNumber || '',
-      url: rec.url || lead?.url || undefined,
-      lane: rec.lane,
-      markedAt: rec.markedAt,
+    if (!state?.queue || !Array.isArray(state.queue)) {
+      return options;
+    }
+
+    state.queue.forEach((leadId) => {
+      if (!leadId) return;
+      
+      const rec = state.byLeadId[leadId];
+      if (!rec) return;
+      
+      if (!includeClosed && rec.replacedByLeadId) return;
+      
+      const repName = repsMap.get(rec.repId) || rec.repId || 'Unknown Rep';
+      const lead = leadMap.get(leadId);
+      
+      options.push({
+        leadId,
+        repId: rec.repId || '',
+        repName,
+        accountNumber: rec.accountNumber || lead?.accountNumber || 'Unknown Account',
+        url: rec.url || lead?.url || undefined,
+        lane: rec.lane || 'sub1k',
+        markedAt: rec.markedAt || 0,
+      });
     });
-  });
 
-  options.sort((a, b) => a.markedAt - b.markedAt); // FIFO
+    // Sort by mark time (FIFO)
+    options.sort((a, b) => a.markedAt - b.markedAt);
+  } catch (error) {
+    console.error('Error building replacement options:', error);
+  }
+  
   return options;
 }
 
@@ -186,30 +327,52 @@ export function overlayRotationWithReplacement(
   state: ReplacementState,
   lane: RotationLane
 ): { collapsedRepIds: string[]; expandedRepIds: string[] } {
-  const openMarksGrouped = new Map<string, number>(); // repId -> earliest mark time
-  state.queue.forEach((leadId) => {
-    const rec = state.byLeadId[leadId];
-    if (!rec) return;
-    if (rec.lane !== lane) return;
-    if (rec.replacedByLeadId) return;
-    const curr = openMarksGrouped.get(rec.repId);
-    openMarksGrouped.set(rec.repId, curr ? Math.min(curr, rec.markedAt) : rec.markedAt);
-  });
+  // Default fallback
+  const fallback = { 
+    collapsedRepIds: [...(baseOrderRepIds || [])], 
+    expandedRepIds: [...(expandedSequenceRepIds || [])] 
+  };
+  
+  try {
+    if (!state?.queue || !Array.isArray(state.queue)) {
+      return fallback;
+    }
 
-  if (openMarksGrouped.size === 0) {
-    return { collapsedRepIds: [...baseOrderRepIds], expandedRepIds: [...expandedSequenceRepIds] };
+    const openMarksGrouped = new Map<string, number>(); // repId -> earliest mark time
+    
+    state.queue.forEach((leadId) => {
+      if (!leadId) return;
+      
+      const rec = state.byLeadId[leadId];
+      if (!rec) return;
+      if (rec.lane !== lane) return;
+      if (rec.replacedByLeadId) return; // Skip closed replacements
+      
+      const curr = openMarksGrouped.get(rec.repId);
+      openMarksGrouped.set(rec.repId, curr ? Math.min(curr, rec.markedAt) : rec.markedAt);
+    });
+
+    if (openMarksGrouped.size === 0) {
+      return fallback;
+    }
+
+    // Sort open reps by mark time (FIFO)
+    const openRepOrder = [...openMarksGrouped.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .map(([repId]) => repId);
+
+    const collapsedRepIds = [
+      ...openRepOrder,
+      ...baseOrderRepIds.filter((id) => id && !openMarksGrouped.has(id)),
+    ];
+    
+    const expandedRepIds = [...openRepOrder, ...expandedSequenceRepIds];
+    
+    return { collapsedRepIds, expandedRepIds };
+  } catch (error) {
+    console.error('Error overlaying rotation with replacement:', error);
+    return fallback;
   }
-
-  const openRepOrder = [...openMarksGrouped.entries()]
-    .sort((a, b) => a[1] - b[1])
-    .map(([repId]) => repId);
-
-  const collapsedRepIds = [
-    ...openRepOrder,
-    ...baseOrderRepIds.filter((id) => !openMarksGrouped.has(id)),
-  ];
-  const expandedRepIds = [...openRepOrder, ...expandedSequenceRepIds];
-  return { collapsedRepIds, expandedRepIds };
 }
 
 /** Calendar visuals (what to show for each entry) */
@@ -217,20 +380,40 @@ export function getCalendarEntryVisual(
   entry: LeadEntry,
   state: ReplacementState
 ): { isOriginalMarkedOpen: boolean; isOriginalMarkedClosed: boolean; isReplacementLead: boolean } {
-  if (entry.type !== 'lead' || !entry.leadId) {
-    return { isOriginalMarkedOpen: false, isOriginalMarkedClosed: false, isReplacementLead: false };
+  const fallback = { isOriginalMarkedOpen: false, isOriginalMarkedClosed: false, isReplacementLead: false };
+  
+  if (!entry || entry.type !== 'lead' || !entry.leadId || !state) {
+    return fallback;
   }
-  const rec = state.byLeadId[entry.leadId];
-  if (rec) {
-    return {
-      isOriginalMarkedOpen: !rec.replacedByLeadId,
-      isOriginalMarkedClosed: Boolean(rec.replacedByLeadId),
-      isReplacementLead: false,
-    };
+  
+  try {
+    const rec = state.byLeadId[entry.leadId];
+    if (rec) {
+      return {
+        isOriginalMarkedOpen: !rec.replacedByLeadId,
+        isOriginalMarkedClosed: Boolean(rec.replacedByLeadId),
+        isReplacementLead: false,
+      };
+    }
+    
+    // Check if this is a replacement lead
+    const closed = Object.values(state.byLeadId || {}).find((r) => 
+      r && r.replacedByLeadId === entry.leadId
+    );
+    
+    if (closed) {
+      return { 
+        isOriginalMarkedOpen: false, 
+        isOriginalMarkedClosed: true, 
+        isReplacementLead: true 
+      };
+    }
+    
+    return fallback;
+  } catch (error) {
+    console.error('Error getting calendar entry visual:', error);
+    return fallback;
   }
-  const closed = Object.values(state.byLeadId).find((r) => r.replacedByLeadId === entry.leadId);
-  if (closed) return { isOriginalMarkedOpen: false, isOriginalMarkedClosed: true, isReplacementLead: true };
-  return { isOriginalMarkedOpen: false, isOriginalMarkedClosed: false, isReplacementLead: false };
 }
 
 /** Tiny pill indicators for calendar */
@@ -249,7 +432,7 @@ export const ReplacementPill: React.FC<{
   );
 };
 
-/** Small “Mark for Replacement” button */
+/** Small "Mark for Replacement" button */
 export const MarkForReplacementButton: React.FC<{
   onClick: React.MouseEventHandler<HTMLButtonElement>;
   disabled?: boolean;
@@ -259,7 +442,7 @@ export const MarkForReplacementButton: React.FC<{
     onClick={onClick}
     disabled={disabled}
     title="Mark this lead as needing replacement"
-    className="p-1 text-orange-600 hover:text-orange-700 disabled:opacity-50"
+    className="p-1 text-orange-600 hover:text-orange-700 disabled:opacity-50 text-xs"
   >
     Replace
   </button>
@@ -270,12 +453,29 @@ export function getReplacementPartnerLeadId(
   entry: LeadEntry,
   state: ReplacementState
 ): { partnerLeadId?: string; isOriginal?: boolean } {
-  if (entry.type !== 'lead' || !entry.leadId) return {};
-  const rec = state.byLeadId[entry.leadId];
-  if (rec) return { partnerLeadId: rec.replacedByLeadId, isOriginal: true };
-  const original = Object.values(state.byLeadId).find((r) => r.replacedByLeadId === entry.leadId);
-  if (original) return { partnerLeadId: original.leadId, isOriginal: false };
-  return {};
+  if (!entry || entry.type !== 'lead' || !entry.leadId || !state) {
+    return {};
+  }
+  
+  try {
+    const rec = state.byLeadId[entry.leadId];
+    if (rec) {
+      return { partnerLeadId: rec.replacedByLeadId, isOriginal: true };
+    }
+    
+    const original = Object.values(state.byLeadId || {}).find((r) => 
+      r && r.replacedByLeadId === entry.leadId
+    );
+    
+    if (original) {
+      return { partnerLeadId: original.leadId, isOriginal: false };
+    }
+    
+    return {};
+  } catch (error) {
+    console.error('Error getting replacement partner:', error);
+    return {};
+  }
 }
 
 /** Assignment lock for replacement save */
@@ -284,16 +484,32 @@ export function getReplacementAssignment(
   monthly: MonthlyStore,
   state: ReplacementState
 ): { repId: string; lane: RotationLane } | null {
-  const rec = state.byLeadId[originalLeadId];
-  if (rec) return { repId: rec.repId, lane: rec.lane };
-  const lead = buildLeadMap(monthly).get(originalLeadId);
-  if (lead) return { repId: lead.assignedTo, lane: laneFromUnits(lead.unitCount) };
-  return null;
+  if (!originalLeadId || !state) {
+    return null;
+  }
+  
+  try {
+    const rec = state.byLeadId[originalLeadId];
+    if (rec) {
+      return { repId: rec.repId, lane: rec.lane };
+    }
+    
+    const lead = buildLeadMap(monthly || {}).get(originalLeadId);
+    if (lead) {
+      return { repId: lead.assignedTo, lane: laneFromUnits(lead.unitCount) };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting replacement assignment:', error);
+    return null;
+  }
 }
 
 /** Time filter */
 export type TimeFilter = 'day' | 'week' | 'month' | 'ytd' | 'alltime';
 
+// FIXED: More robust time filtering with better error handling
 export function filterOpenMarksByTime(
   state: ReplacementState,
   lane: RotationLane,
@@ -301,33 +517,59 @@ export function filterOpenMarksByTime(
   today: Date
 ): Array<ReplacementRecord> {
   const open: ReplacementRecord[] = [];
-  const y = today.getFullYear();
-  const m = today.getMonth();
-  const d = today.getDate();
-
-  const startOf = {
-    day: new Date(y, m, d),
-    week: new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000),
-    month: new Date(y, m, 1),
-    ytd: new Date(y, 0, 1),
-    alltime: new Date(0),
-  } as const;
-
-  const start = filter === 'alltime' ? startOf.alltime
-    : filter === 'ytd' ? startOf.ytd
-    : filter === 'month' ? startOf.month
-    : filter === 'week' ? startOf.week
-    : startOf.day;
-
-  for (const leadId of state.queue) {
-    const rec = state.byLeadId[leadId];
-    if (!rec) continue;
-    if (rec.lane !== lane) continue;
-    if (rec.replacedByLeadId) continue;
-    if (rec.markedAt >= start.getTime() && rec.markedAt <= today.getTime()) {
-      open.push(rec);
+  
+  try {
+    if (!state?.queue || !Array.isArray(state.queue) || !today) {
+      return open;
     }
+
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const d = today.getDate();
+
+    // Create time boundaries more safely
+    let startTime: number;
+    const endTime = today.getTime();
+
+    switch (filter) {
+      case 'day':
+        startTime = new Date(y, m, d).getTime();
+        break;
+      case 'week':
+        startTime = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000).getTime();
+        break;
+      case 'month':
+        startTime = new Date(y, m, 1).getTime();
+        break;
+      case 'ytd':
+        startTime = new Date(y, 0, 1).getTime();
+        break;
+      case 'alltime':
+      default:
+        startTime = 0;
+        break;
+    }
+
+    for (const leadId of state.queue) {
+      if (!leadId) continue;
+      
+      const rec = state.byLeadId[leadId];
+      if (!rec) continue;
+      if (rec.lane !== lane) continue;
+      if (rec.replacedByLeadId) continue; // Skip closed replacements
+      
+      // Check time bounds
+      const markTime = rec.markedAt || 0;
+      if (markTime >= startTime && markTime <= endTime) {
+        open.push(rec);
+      }
+    }
+    
+    // Sort by mark time (FIFO)
+    open.sort((a, b) => (a.markedAt || 0) - (b.markedAt || 0));
+  } catch (error) {
+    console.error('Error filtering open marks by time:', error);
   }
-  open.sort((a, b) => a.markedAt - b.markedAt);
+  
   return open;
 }

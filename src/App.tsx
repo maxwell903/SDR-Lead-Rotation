@@ -13,7 +13,8 @@ import {
   applyReplacement,
   undoReplacementByDeletingReplacementLead,
   canDeleteLead,
-} from './features/leadReplacement.tsx';
+  removeLeadMark,
+} from './features/leadReplacement';
 
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
@@ -45,7 +46,8 @@ const calculateNextInRotation = (
   baseOrder: string[], 
   entries: LeadEntry[], 
   leads: Lead[], 
-  is1kPlus: boolean = false
+  is1kPlus: boolean = false,
+  replacementState: ReplacementState
 ): string => {
   if (!baseOrder.length) return '';
   
@@ -55,7 +57,15 @@ const calculateNextInRotation = (
   // Initialize all reps with 0 hits
   baseOrder.forEach(repId => hits.set(repId, 0));
   
-  // Count each skip and qualifying lead individually (no deduplication)
+  // Track closed original leads that shouldn't count as hits
+  const closedOriginalLeadIds = new Set<string>();
+  for (const rec of Object.values(replacementState.byLeadId)) {
+    if (rec.replacedByLeadId) {
+      closedOriginalLeadIds.add(rec.leadId);
+    }
+  }
+  
+  // Count each skip and qualifying lead individually
   entries.forEach(entry => {
     // Only count entries for reps that are in this specific rotation
     if (!baseOrder.includes(entry.repId)) {
@@ -66,6 +76,11 @@ const calculateNextInRotation = (
       // Each skip counts as a hit
       hits.set(entry.repId, (hits.get(entry.repId) || 0) + 1);
     } else if (entry.type === 'lead' && entry.leadId) {
+      // Skip counting the original lead if it has been replaced
+      if (closedOriginalLeadIds.has(entry.leadId)) {
+        return;
+      }
+      
       // Lead counts as hit if it qualifies for this lane
       const lead = leads.find(l => l.id === entry.leadId);
       if (lead) {
@@ -208,10 +223,12 @@ export default function App() {
     normalRotationSub1k: [],
     normalRotationOver1k: []
   });
-  // Lead-replacement state
+  
+  // Lead replacement state
   const [replacementState, setReplacementState] = useState<ReplacementState>(
     createEmptyReplacementState()
   );
+
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [showRepManager, setShowRepManager] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
@@ -242,9 +259,9 @@ export default function App() {
     const baseOrderSub1k = sub1kReps.map(rep => rep.id);
     const baseOrderOver1k = over1kReps.map(rep => rep.id);
 
-    // Calculate who's next based on current hit counts
-    const nextSub1k = calculateNextInRotation(baseOrderSub1k, currentMonthData.entries, currentMonthData.leads, false);
-    const next1kPlus = calculateNextInRotation(baseOrderOver1k, currentMonthData.entries, currentMonthData.leads, true);
+    // Calculate who's next based on current hit counts (including replacement logic)
+    const nextSub1k = calculateNextInRotation(baseOrderSub1k, currentMonthData.entries, currentMonthData.leads, false, replacementState);
+    const next1kPlus = calculateNextInRotation(baseOrderOver1k, currentMonthData.entries, currentMonthData.leads, true, replacementState);
 
     // Calculate current skip counts for legacy compatibility
     const skipCounts: { [repId: string]: number } = {};
@@ -264,7 +281,7 @@ export default function App() {
       next1kPlus: next1kPlus,
       skips: skipCounts
     }));
-  }, [salesReps, currentMonthData]);
+  }, [salesReps, currentMonthData, replacementState]);
 
   const getEligibleReps = (leadData: any): SalesRep[] => {
     const isOver1k = leadData.unitCount >= 1000;
@@ -290,7 +307,7 @@ export default function App() {
     const baseOrder = isOver1k ? rotationState.normalRotationOver1k : rotationState.normalRotationSub1k;
     
     // Calculate next based on current data
-    const nextRepId = calculateNextInRotation(baseOrder, currentMonthData.entries, currentMonthData.leads, isOver1k);
+    const nextRepId = calculateNextInRotation(baseOrder, currentMonthData.entries, currentMonthData.leads, isOver1k, replacementState);
     
     // Verify the calculated next rep is eligible for this specific lead
     if (eligibleReps.some(rep => rep.id === nextRepId)) {
@@ -338,9 +355,8 @@ export default function App() {
       return;
     }
 
-    // Handle new entries
+    // Handle non-lead entries (skip, ooo, next)
     if (leadData.type && leadData.type !== 'lead') {
-      // Handle non-lead entries (skip, ooo, next)
       const newEntry: LeadEntry = {
         id: Date.now().toString(),
         day: selectedCell?.day || new Date().getDate(),
@@ -374,8 +390,22 @@ export default function App() {
       return;
     }
 
-    // Handle lead assignment
-    const assignedRepId = leadData.assignedTo || getNextInRotation(leadData);
+    // Handle lead assignment - check for replacement first
+    let assignedRepId = leadData.assignedTo;
+    
+    if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
+      // This is a replacement lead - get the locked assignment
+      const assignment = getReplacementAssignment(leadData.originalLeadIdToReplace);
+      if (assignment) {
+        assignedRepId = assignment.repId;
+      }
+    }
+    
+    // Fallback to normal assignment logic if no replacement or assignment failed
+    if (!assignedRepId) {
+      assignedRepId = getNextInRotation(leadData);
+    }
+
     if (!assignedRepId) {
       alert('No eligible sales rep found for this lead');
       return;
@@ -420,8 +450,8 @@ export default function App() {
       [monthKey]: updatedData
     }));
 
-     // If this is a replacement lead, close the mark now
-    if (leadData?.replaceToggle && leadData?.originalLeadIdToReplace) {
+    // If this is a replacement lead, close the mark now
+    if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
       setReplacementState(prev =>
         applyReplacement(prev, leadData.originalLeadIdToReplace, newLead)
       );
@@ -443,11 +473,11 @@ export default function App() {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     const entry = currentMonthData.entries.find(e => e.id === entryId);
     
-    // Guard: Can't delete an original lead that already has a replacement
+    // Guard: Check if lead can be deleted using replacement rules
     if (entry?.type === 'lead' && entry.leadId) {
       const guard = canDeleteLead(replacementState, entry.leadId);
       if (!guard.allowed) {
-        alert(guard.reason || 'This lead cannot be deleted because it is linked to a replacement.');
+        alert(guard.reason || 'This lead cannot be deleted due to replacement constraints.');
         return;
       }
     }
@@ -471,7 +501,7 @@ export default function App() {
         [monthKey]: updatedData
       }));
 
-            // Replacement bookkeeping:
+      // Handle replacement bookkeeping
       if (entry.type === 'lead' && entry.leadId) {
         // If we deleted a replacement lead, reopen the original mark
         setReplacementState(prev =>
@@ -481,22 +511,12 @@ export default function App() {
         // If we deleted an original lead that was marked OPEN (no replacement yet), remove the mark entirely
         const rec = replacementState.byLeadId[entry.leadId!];
         if (rec && !rec.replacedByLeadId) {
-          setReplacementState(prev => {
-            const next = {
-              byLeadId: { ...prev.byLeadId },
-              queue: prev.queue.filter(id => id !== entry.leadId!)
-            };
-            delete next.byLeadId[entry.leadId!];
-            return next;
-          });
+          setReplacementState(prev => removeLeadMark(prev, entry.leadId!));
         }
       }
 
-
       // Recalculate skip counts from scratch based on remaining entries
       const newSkipCounts: { [repId: string]: number } = {};
-      
-      // Count all skip entries for each rep from the updated entries
       updatedEntries.forEach(e => {
         if (e.type === 'skip') {
           newSkipCounts[e.repId] = (newSkipCounts[e.repId] || 0) + 1;
@@ -518,21 +538,57 @@ export default function App() {
   };
 
   const handleMarkForReplacement = (leadId: string) => {
-  // Search across months for safety
-  let target: Lead | undefined;
-  for (const mk of Object.keys(monthlyData)) {
-    const md = monthlyData[mk];
-    const f = md?.leads?.find(l => l.id === leadId);
-    if (f) { target = f; break; }
-  }
-  if (!target) {
-    const inCurrent = currentMonthData.leads.find(l => l.id === leadId);
-    target = inCurrent;
-  }
-  if (!target) return;
-  setReplacementState(prev => markLeadForReplacement(prev, target!));
-};
+    // Search across months for the lead data
+    let targetLead: Lead | undefined;
+    
+    // Check current month first
+    targetLead = currentMonthData.leads.find(l => l.id === leadId);
+    
+    // If not found, search other months
+    if (!targetLead) {
+      for (const monthKey of Object.keys(monthlyData)) {
+        const monthData = monthlyData[monthKey];
+        const found = monthData.leads.find(l => l.id === leadId);
+        if (found) {
+          targetLead = found;
+          break;
+        }
+      }
+    }
+    
+    if (!targetLead) {
+      console.error('Lead not found for marking:', leadId);
+      return;
+    }
+    
+    setReplacementState(prev => markLeadForReplacement(prev, targetLead!));
+  };
 
+  // Helper function for replacement assignment lookup
+  const getReplacementAssignment = (originalLeadId: string) => {
+    const rec = replacementState.byLeadId[originalLeadId];
+    if (rec) {
+      return { repId: rec.repId, lane: rec.lane };
+    }
+    
+    // Fallback: search for lead in monthly data
+    for (const monthData of Object.values(monthlyData)) {
+      const lead = monthData.leads.find(l => l.id === originalLeadId);
+      if (lead) {
+        return { 
+          repId: lead.assignedTo, 
+          lane: lead.unitCount >= 1000 ? '1kplus' as const : 'sub1k' as const 
+        };
+      }
+    }
+    
+    return null;
+  };
+
+
+  const handleRemoveReplacementMark = (leadId: string) => {
+  setReplacementState(prev => removeLeadMark(prev, leadId));
+};
   const handleUpdateEntry = (entryId: string, updatedData: any) => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     
@@ -569,9 +625,19 @@ export default function App() {
         };
       }
 
+
       // Handle lead entry updates
       const oldAssignedRepId = existingEntry.repId;
-      const newAssignedRepId = updatedData.assignedTo;
+      let newAssignedRepId = updatedData.assignedTo;
+
+      // Check if this is a replacement lead update
+      if (updatedData.replaceToggle && updatedData.originalLeadIdToReplace) {
+        const assignment = getReplacementAssignment(updatedData.originalLeadIdToReplace);
+        if (assignment) {
+          newAssignedRepId = assignment.repId;
+        }
+      }
+
       const assignmentChanged = oldAssignedRepId !== newAssignedRepId;
 
       // Create updated lead
@@ -587,7 +653,7 @@ export default function App() {
         month: currentData.month,
         year: currentData.year
       } : {
-        // Create new lead if one doesn't exist (shouldn't happen but safety check)
+        // Create new lead if one doesn't exist (safety check)
         id: Date.now().toString(),
         accountNumber: updatedData.accountNumber,
         url: updatedData.url,
@@ -625,14 +691,12 @@ export default function App() {
           lead.id === existingEntry.leadId ? updatedLead : lead
         );
       } else {
-        // Add new lead (shouldn't happen but safety check)
+        // Add new lead (safety check)
         updatedLeads = [...currentData.leads, updatedLead];
       }
 
-      // If assignment changed, we need to update rotation logic
+      // If assignment changed, trigger rotation recalculation
       if (assignmentChanged) {
-        // The rotation state will be recalculated by the useEffect
-        // but we can trigger a re-render to ensure it happens
         setTimeout(() => {
           updateRotationAfterAssignment(newAssignedRepId, updatedLead.unitCount >= 1000);
         }, 0);
@@ -663,8 +727,6 @@ export default function App() {
 
   const handleRepUpdate = (updatedReps: SalesRep[]) => {
     setSalesReps(updatedReps);
-    
-    // The useEffect will automatically recalculate rotation orders when reps are updated
   };
 
   return (
@@ -737,6 +799,7 @@ export default function App() {
               leads={currentMonthData.leads}
               replacementState={replacementState}
               onMarkForReplacement={handleMarkForReplacement}
+              onRemoveReplacementMark={handleRemoveReplacementMark}
             />
           </div>
           

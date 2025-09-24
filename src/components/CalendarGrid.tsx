@@ -22,6 +22,7 @@ interface CalendarGridProps {
   //lead-replacement props
   replacementState: ReplacementState;
   onMarkForReplacement: (leadId: string) => void;
+  onRemoveReplacementMark: (leadId: string) => void;
 }
 
 const CalendarGrid: React.FC<CalendarGridProps> = ({
@@ -37,6 +38,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   // NEW
   replacementState,
   onMarkForReplacement,
+  onRemoveReplacementMark,
 }) => {
   // State management
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -787,22 +789,39 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                               <div className="flex-1 min-w-0">
                                 {renderEntryContent(entry)}
                               </div>
+
+                              
                              {/* NEW: hover actions include "Replace" for leads not already in replacement flow */}
-                              <div className="hidden group-hover:flex items-center space-x-1 ml-2">
-                                {entry.type === 'lead' && entry.leadId && (() => {
-                                  const vis = getCalendarEntryVisual(entry, replacementState);
-                                  if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen) {
-                                    return (
-                                      <MarkForReplacementButton
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          onMarkForReplacement(entry.leadId!);
-                                        }}
-                                      />
-                                    );
-                                  }
-                                  return null;
-                                })()}
+                              {/* Hover actions include "Replace" and "Unmark" */}
+<div className="hidden group-hover:flex items-center space-x-1 ml-2">
+  {entry.type === 'lead' && entry.leadId && (() => {
+    const vis = getCalendarEntryVisual(entry, replacementState);
+    if (vis.isOriginalMarkedOpen) {
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemoveReplacementMark(entry.leadId!);
+          }}
+          className="p-1 text-gray-600 hover:text-gray-800 text-xs"
+          title="Remove replacement mark"
+        >
+          Unmark
+        </button>
+      );
+    } else if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen) {
+      return (
+        <MarkForReplacementButton
+          onClick={(e) => {
+            e.stopPropagation();
+            onMarkForReplacement(entry.leadId!);
+          }}
+        />
+      );
+    }
+    return null;
+  })()}
+  {/* ... existing edit and delete buttons */}
                                 <button
                                   onClick={(e) => handleEntryAction(e, 'edit', entry)}
                                   className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
