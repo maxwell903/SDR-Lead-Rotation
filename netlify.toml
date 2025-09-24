@@ -2,8 +2,11 @@
   command = "npm run build"
   publish = "dist"
 
-# Only add this redirect if you use client-side routing (react-router, etc.)
+# Only if using client-side routing (React Router, etc.)
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+[build.environment]
+  NODE_VERSION = "20"
