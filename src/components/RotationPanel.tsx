@@ -322,7 +322,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     try {
       const openOrder = getOpenRepOrder(lane);
       if (openOrder.length === 0) {
-        // No overlay: keep original nextPosition numbers as displayPosition
+        // No overlay: keep original first-appearance positions as displayPosition
         return items.map((item, index) => ({
           ...item,
           displayPosition: item.nextPosition,
@@ -331,39 +331,53 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
       }
 
       const itemsByRepId = new Map(items.map(i => [i.repId, i]));
-      const openIndex = new Map(openOrder.map((id, idx) => [id, idx])); // repId -> 0-based open rank
+      const openRepIds = new Set(openOrder);
+ 
 
-      // Compose: open reps first (tagged), then remaining reps in their existing order
-      const finalItems: RotationItem[] = [];
-
+      // Split items into open and non-open reps
+      const openItems: RotationItem[] = [];
+      const nonOpenItems: RotationItem[] = [];
+      
+      // Collect open reps in FIFO order
       openOrder.forEach(repId => {
-        const base = itemsByRepId.get(repId);
-        if (base) {
-          finalItems.push({
-            ...base,
+        const item = itemsByRepId.get(repId);
+        if (item) {
+          openItems.push({
+            ...item,
             hasOpenReplacements: true
           });
         }
       });
-
+      
+      // Collect non-open reps in their original nextPosition order  
       items.forEach(item => {
-        if (!openIndex.has(item.repId)) {
-          finalItems.push(item);
+        if (!openRepIds.has(item.repId)) {
+          nonOpenItems.push(item);
         }
       });
+      
+      // Compose final list: open reps first, then non-open reps
+      const finalItems: RotationItem[] = [];
+
+      
+
+      finalItems.push(...openItems);
+      finalItems.push(...nonOpenItems);
+ 
 
       // Assign displayPosition:
       //  – Open reps get 1..N
       //  – Everyone else keeps their true nextPosition
-      return finalItems.map((item, index) => ({
-        ...item,
-        displayPosition: openIndex.has(item.repId)
-          ? (openIndex.get(item.repId)! + 1)
-          : item.nextPosition,
-        isNext: index === 0
-      }));
-    } catch (error) {
-      console.error('Error in overlayCollapsed:', error);
+       return finalItems.map((item, index) => ({
+         ...item,
+         displayPosition: openRepIds.has(item.repId)
+
+          ? (openOrder.indexOf(item.repId) + 1)
+           : item.nextPosition,
+         isNext: index === 0
+       }));
+     } catch (error) {
+       console.error('Error in overlayCollapsed:', error);
       return items;
     }
   };
@@ -610,7 +624,7 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
         </span>
         {item.hasOpenReplacements && (
           <span className="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded-full">
-            Needs Replacement
+            Replace
           </span>
         )}
         {item.isNext && !item.hasOpenReplacements && (
