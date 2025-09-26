@@ -53,6 +53,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
   const [nextRep, setNextRep] = useState<string>('');
   const [unitCountFocused, setUnitCountFocused] = useState(false);
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const propertyTypeOptions = ['MFH', 'MF', 'SFH', 'Commercial'];
   const isEditing = !!editingEntry;
 
@@ -257,19 +259,28 @@ const LeadModal: React.FC<LeadModalProps> = ({
     return true;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!validateForm()) {
-      return;
-    }
-    
-    // NEW: require a selection if replacing
-    if (replaceToggle && !originalLeadIdToReplace) {
-      alert('Please select which lead you are replacing.');
-      return;
-    }
+  const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  // Prevent multiple submissions
+  if (isSubmitting) {
+    console.log('Already submitting, ignoring additional click');
+    return;
+  }
+  
+  if (!validateForm()) {
+    return;
+  }
+  
+  // NEW: require a selection if replacing
+  if (replaceToggle && !originalLeadIdToReplace) {
+    alert('Please select which lead you are replacing.');
+    return;
+  }
 
+  try {
+    setIsSubmitting(true);
+    
     const saveData = {
       ...formData,
       type: entryType,
@@ -288,8 +299,15 @@ const LeadModal: React.FC<LeadModalProps> = ({
       originalLeadIdToReplace,
     };
     
-    onSave(saveData);
-  };
+    await onSave(saveData);
+  } catch (error) {
+    console.error('Error in form submission:', error);
+    // Don't close modal on error, let user try again
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
 
   const getRotationTargetLabel = (target: string) => {
     switch (target) {
@@ -581,20 +599,37 @@ const LeadModal: React.FC<LeadModalProps> = ({
           )}
 
           <div className="flex space-x-3 pt-4">
-            <button
-              type="submit"
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              {isEditing ? 'Update Entry' : 'Save Entry'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
-            >
-              Cancel
-            </button>
-          </div>
+  <button
+    type="submit"
+    disabled={isSubmitting}
+    className={`flex-1 py-2 rounded-lg focus:ring-2 focus:ring-offset-2 transition-all duration-200 ${
+      isSubmitting 
+        ? 'bg-gray-400 text-gray-200 cursor-not-allowed' 
+        : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500'
+    }`}
+  >
+    {isSubmitting ? (
+      <div className="flex items-center justify-center space-x-2">
+        <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-200 border-t-transparent"></div>
+        <span>Saving...</span>
+      </div>
+    ) : (
+      isEditing ? 'Update Entry' : 'Save Entry'
+    )}
+  </button>
+  <button
+    type="button"
+    onClick={onClose}
+    disabled={isSubmitting} // Also disable cancel during save
+    className={`flex-1 py-2 rounded-lg transition-colors duration-200 ${
+      isSubmitting 
+        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+        : 'bg-gray-300 text-gray-700 hover:bg-gray-400 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2'
+    }`}
+  >
+    Cancel
+  </button>
+</div>
         </form>
       </div>
     </div>

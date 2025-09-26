@@ -22,6 +22,102 @@ import { useSalesReps } from './hooks/useSupabaseData';
 import AuthWrapper from './components/AuthWrapper';
 import { useLeads } from './hooks/useLeads';
 
+
+const generateUniqueId = (prefix: string = 'entry'): string => {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${performance.now()}`;
+};
+
+// Utility function to check for duplicate entries
+const checkForDuplicateEntry = (
+  existingEntries: LeadEntry[], 
+  newEntry: Partial<LeadEntry>,
+  excludeId?: string
+): LeadEntry | null => {
+  return existingEntries.find(entry => {
+    // Skip the entry we're updating
+    if (excludeId && entry.id === excludeId) return false;
+    
+    // Check for duplicate non-lead entries (same type, day, rep)
+    if (newEntry.type !== 'lead' && entry.type === newEntry.type) {
+      return entry.day === newEntry.day && 
+             entry.repId === newEntry.repId &&
+             entry.month === newEntry.month &&
+             entry.year === newEntry.year;
+    }
+    
+    // Check for duplicate leads (same account number, month, year)
+    if (newEntry.type === 'lead' && entry.type === 'lead') {
+      return entry.value === newEntry.value && // account number
+             entry.month === newEntry.month &&
+             entry.year === newEntry.year;
+    }
+    
+    return false;
+  }) || null;
+};
+
+// Utility function to safely add entry to state
+const safeAddEntryToState = (
+  currentEntries: LeadEntry[], 
+  newEntry: LeadEntry
+): LeadEntry[] => {
+  // Check for duplicates first
+  const duplicate = checkForDuplicateEntry(currentEntries, newEntry);
+  if (duplicate) {
+    console.warn('Duplicate entry detected, not adding:', { duplicate, newEntry });
+    return currentEntries; // Return unchanged
+  }
+  
+  // Add the new entry
+  return [...currentEntries, newEntry];
+};
+
+// Utility function to safely update entry in state
+const safeUpdateEntryInState = (
+  currentEntries: LeadEntry[], 
+  entryId: string, 
+  updatedEntry: Partial<LeadEntry>
+): LeadEntry[] => {
+  const entryIndex = currentEntries.findIndex(e => e.id === entryId);
+  if (entryIndex === -1) {
+    console.warn('Entry not found for update:', entryId);
+    return currentEntries;
+  }
+  
+  const updatedFullEntry = { ...currentEntries[entryIndex], ...updatedEntry };
+  
+  // Check if update would create a duplicate
+  const duplicate = checkForDuplicateEntry(currentEntries, updatedFullEntry, entryId);
+  if (duplicate) {
+    console.warn('Update would create duplicate, cancelling:', { duplicate, updatedEntry });
+    return currentEntries; // Return unchanged
+  }
+  
+  const newEntries = [...currentEntries];
+  newEntries[entryIndex] = updatedFullEntry;
+  return newEntries;
+};
+
+const updateMonthlyDataSafely = (
+  setMonthlyData: React.Dispatch<React.SetStateAction<{ [key: string]: any }>>,
+  monthKey: string,
+  currentMonthData: any,
+  updateFn: (entries: LeadEntry[]) => LeadEntry[]
+) => {
+  setMonthlyData(prev => {
+    const currentData = prev[monthKey] || currentMonthData;
+    const updatedEntries = updateFn(currentData.entries || []);
+    
+    return {
+      ...prev,
+      [monthKey]: {
+        ...currentData,
+        entries: updatedEntries
+      }
+    };
+  });
+};
+
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -248,6 +344,7 @@ export default function App() {
   const [showParameters, setShowParameters] = useState(false);
   const [selectedCell, setSelectedCell] = useState<{ day: number; repId: string } | null>(null);
   const [editingEntry, setEditingEntry] = useState<LeadEntry | null>(null);
+  const [activeSaveOperations, setActiveSaveOperations] = useState<Set<string>>(new Set());
   
 
   // 2) Derived values (fine to compute every render)
@@ -438,209 +535,237 @@ export default function App() {
   };
 
   const handleUpdateEntry = async (entryId: string, updatedData: any) => {
-    const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
+  const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
+  
+  updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
+    const existingEntry = entries.find(e => e.id === entryId);
     
-    setMonthlyData(prev => {
-      const currentData = prev[monthKey] || currentMonthData;
-      const existingEntry = currentData.entries.find(e => e.id === entryId);
+    if (!existingEntry) {
+      console.warn('Entry not found for update:', entryId);
+      return entries;
+    }
+
+    // Handle non-lead entries locally
+    if (updatedData.type !== 'lead') {
+      const updatedEntry = {
+        type: updatedData.type,
+        value: updatedData.type.toUpperCase(),
+        repId: updatedData.assignedTo || existingEntry.repId,
+        rotationTarget: updatedData.rotationTarget || existingEntry.rotationTarget
+      };
       
-      if (!existingEntry) return prev;
+      return safeUpdateEntryInState(entries, entryId, updatedEntry);
+    }
 
-      // Handle non-lead entries locally
-      if (updatedData.type !== 'lead') {
-        const updatedEntries = currentData.entries.map(entry => {
-          if (entry.id === entryId) {
-            return {
-              ...entry,
-              type: updatedData.type,
-              value: updatedData.type.toUpperCase(),
-              repId: updatedData.assignedTo || entry.repId,
-              rotationTarget: updatedData.rotationTarget || entry.rotationTarget
-            };
-          }
-          return entry;
-        });
+    // Handle lead updates - save to database
+    if (existingEntry.leadId) {
+      // Update the lead in the database
+      updateLead(existingEntry.leadId, {
+        accountNumber: updatedData.accountNumber,
+        url: updatedData.url,
+        propertyTypes: updatedData.propertyTypes,
+        unitCount: updatedData.unitCount,
+        assignedTo: updatedData.assignedTo,
+        comments: updatedData.comments || []
+      }).catch(error => {
+        console.error('Failed to update lead:', error);
+        alert('Failed to update lead. Please try again.');
+      });
 
-        return {
-          ...prev,
-          [monthKey]: {
-            ...currentData,
-            entries: updatedEntries
-          }
-        };
+      // Update local entry safely
+      const updatedEntry = {
+        repId: updatedData.assignedTo,
+        value: updatedData.accountNumber,
+        url: updatedData.url,
+        comments: updatedData.comments || [],
+        unitCount: updatedData.unitCount,
+        rotationTarget: (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k'
+      };
+      
+      return safeUpdateEntryInState(entries, entryId, updatedEntry);
+    }
+
+    return entries;
+  });
+
+  setShowLeadModal(false);
+  setSelectedCell(null);
+  setEditingEntry(null);
+};
+
+
+  const handleAddLead = async (leadData: any) => {
+  const month = currentDate.getMonth();
+  const year = currentDate.getFullYear();
+  const monthKey = `${year}-${month}`;
+
+  // Handle updates to existing entries
+  if (leadData.isEditing && leadData.editingEntryId) {
+    await handleUpdateEntry(leadData.editingEntryId, leadData);
+    return;
+  }
+
+  // Handle non-lead entries (skip, ooo, next) - keep in local state only
+  if (leadData.type && leadData.type !== 'lead') {
+    const newEntry: LeadEntry = {
+      id: generateUniqueId('nonlead'),
+      day: selectedCell?.day || new Date().getDate(),
+      repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
+      type: leadData.type,
+      value: leadData.type.toUpperCase(),
+      url: undefined,
+      comments: [],
+      month,
+      year,
+      unitCount: undefined,
+      rotationTarget: leadData.rotationTarget || 'both'
+    };
+    
+    // Use safe state update to prevent duplicates
+    updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
+      const duplicate = checkForDuplicateEntry(entries, newEntry);
+      if (duplicate) {
+        alert(`A ${leadData.type.toUpperCase()} entry already exists for ${salesReps.find(r => r.id === newEntry.repId)?.name || 'this rep'} on day ${newEntry.day}`);
+        throw new Error('Duplicate entry prevented');
       }
+      return safeAddEntryToState(entries, newEntry);
+    });
 
-      // Handle lead updates - save to database
-      if (existingEntry.leadId) {
-        // Update the lead in the database
-        updateLead(existingEntry.leadId, {
-          accountNumber: updatedData.accountNumber,
-          url: updatedData.url,
-          propertyTypes: updatedData.propertyTypes,
-          unitCount: updatedData.unitCount,
-          assignedTo: updatedData.assignedTo,
-          comments: updatedData.comments || []
-        }).catch(error => {
-          console.error('Failed to update lead:', error);
-          alert('Failed to update lead. Please try again.');
-        });
+    if (leadData.type === 'skip') {
+      updateRotationAfterAssignment(newEntry.repId, false, true);
+    }
+    
+    setShowLeadModal(false);
+    setSelectedCell(null);
+    return;
+  }
 
-        // Update local entry
-        const updatedEntries = currentData.entries.map(entry => {
-          if (entry.id === entryId) {
-            return {
-              ...entry,
-              repId: updatedData.assignedTo,
-              value: updatedData.accountNumber,
-              url: updatedData.url,
-              comments: updatedData.comments || [],
-              unitCount: updatedData.unitCount,
-              rotationTarget: (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k'
-            };
-          }
-          return entry;
-        });
+  // Handle lead assignment with enhanced duplicate prevention
+  let assignedRepId = leadData.assignedTo;
 
-        return {
-          ...prev,
-          [monthKey]: {
-            ...currentData,
-            entries: updatedEntries
-            // leads come from DB via hook
-          }
-        };
+  if (!assignedRepId) {
+    assignedRepId = getNextInRotation(leadData);
+  }
+
+  if (!assignedRepId) {
+    alert('No eligible sales rep found for this lead');
+    return;
+  }
+
+  // Create unique operation ID to prevent race conditions
+  const operationId = `${leadData.accountNumber}-${assignedRepId}-${Date.now()}`;
+  
+  // Check if this operation is already in progress
+  if (activeSaveOperations.has(operationId)) {
+    console.log('Save operation already in progress for this lead:', operationId);
+    return;
+  }
+
+  // ENHANCED: Check for duplicates in both DB leads and local entries
+  const accountNumber = leadData.accountNumber.trim();
+  
+  // Check current month DB leads
+  const existingDbLead = currentMonthData.leads?.find(
+    lead => lead.accountNumber.trim().toLowerCase() === accountNumber.toLowerCase()
+  );
+  
+  if (existingDbLead) {
+    alert(`A lead with account number "${accountNumber}" already exists this month in database`);
+    return;
+  }
+  
+  // Check current month local entries  
+  const existingLocalEntry = currentMonthData.entries?.find(
+    entry => entry.type === 'lead' && 
+             entry.value?.trim().toLowerCase() === accountNumber.toLowerCase()
+  );
+  
+  if (existingLocalEntry) {
+    alert(`A lead with account number "${accountNumber}" already exists this month in local state`);
+    return;
+  }
+
+  try {
+    // Mark operation as active
+    setActiveSaveOperations(prev => new Set(prev).add(operationId));
+    console.log('Starting save operation:', operationId);
+
+    // Save lead to database
+    const newLead = await addLead({
+      accountNumber: leadData.accountNumber,
+      url: leadData.url,
+      propertyTypes: leadData.propertyTypes,
+      unitCount: leadData.unitCount,
+      assignedTo: assignedRepId,
+      date: new Date(),
+      comments: leadData.comments || [],
+      month: month + 1, // DB stores 1-12
+      year
+    });
+
+    console.log('Lead saved successfully:', newLead.id);
+
+    // Create local entry for the calendar with guaranteed unique ID
+    const newEntry: LeadEntry = {
+      id: generateUniqueId(`lead_${newLead.id}`),
+      day: selectedCell?.day || new Date().getDate(),
+      repId: assignedRepId,
+      type: 'lead',
+      value: newLead.accountNumber,
+      url: newLead.url,
+      comments: newLead.comments,
+      leadId: newLead.id,
+      month,
+      year,
+      unitCount: newLead.unitCount,
+      rotationTarget: newLead.unitCount >= 1000 ? 'over1k' : 'sub1k'
+    };
+
+    // Handle replacement logic
+    if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
+      try {
+        await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
+        console.log('Replacement applied successfully');
+        // Page should automatically refresh via real time subscription
+      } catch (error) {
+        console.error('Error applying replacement:', error);
+        alert('Failed to apply replacement');
+        return;
       }
+    }
 
-      return prev;
+    // ENHANCED: Safely update local state with duplicate prevention
+    updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
+      // Double-check for duplicates before adding (defensive programming)
+      const duplicate = checkForDuplicateEntry(entries, newEntry);
+      if (duplicate) {
+        console.warn('Duplicate detected during local state update, skipping:', duplicate);
+        return entries; // Don't add if duplicate found
+      }
+      return safeAddEntryToState(entries, newEntry);
     });
 
     setShowLeadModal(false);
     setSelectedCell(null);
-    setEditingEntry(null);
-  };
-
-  const handleAddLead = async (leadData: any) => {
-    const month = currentDate.getMonth();
-    const year = currentDate.getFullYear();
-    const monthKey = `${year}-${month}`;
-
-    // Handle updates to existing entries
-    if (leadData.isEditing && leadData.editingEntryId) {
-      await handleUpdateEntry(leadData.editingEntryId, leadData);
-      return;
-    }
-
-    // Handle non-lead entries (skip, ooo, next) - keep in local state only
-    if (leadData.type && leadData.type !== 'lead') {
-      const newEntry: LeadEntry = {
-        id: Date.now().toString(),
-        day: selectedCell?.day || new Date().getDate(),
-        repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
-        type: leadData.type,
-        value: leadData.type.toUpperCase(),
-        url: undefined,
-        comments: [],
-        month,
-        year,
-        unitCount: undefined,
-        rotationTarget: leadData.rotationTarget || 'both'
-      };
-      
-      const updatedData = {
-        ...currentMonthData,
-        entries: [...currentMonthData.entries, newEntry]
-      };
-      
-      setMonthlyData(prev => ({
-        ...prev,
-        [monthKey]: updatedData
-      }));
-
-      if (leadData.type === 'skip') {
-        updateRotationAfterAssignment(newEntry.repId, false, true);
-      }
-      
-      setShowLeadModal(false);
-      setSelectedCell(null);
-      return;
-    }
-
-    // Handle lead assignment
-    let assignedRepId = leadData.assignedTo;
-
-    if (!assignedRepId) {
-      assignedRepId = getNextInRotation(leadData);
-    }
-
-    if (!assignedRepId) {
-      alert('No eligible sales rep found for this lead');
-      return;
-    }
-
-    try {
-      // Save lead to database
-      const newLead = await addLead({
-        accountNumber: leadData.accountNumber,
-        url: leadData.url,
-        propertyTypes: leadData.propertyTypes,
-        unitCount: leadData.unitCount,
-        assignedTo: assignedRepId,
-        date: new Date(),
-        comments: leadData.comments || [],
-        month: month + 1, // DB stores 1-12
-        year
-      });
-
-      // Create local entry for the calendar
-      const newEntry: LeadEntry = {
-        id: Date.now().toString(),
-        day: selectedCell?.day || new Date().getDate(),
-        repId: assignedRepId,
-        type: 'lead',
-        value: newLead.accountNumber,
-        url: newLead.url,
-        comments: newLead.comments,
-        leadId: newLead.id,
-        month,
-        year,
-        unitCount: newLead.unitCount,
-        rotationTarget: newLead.unitCount >= 1000 ? 'over1k' : 'sub1k'
-      };
-
-      // Update local entries (leads come from DB via hook)
-      const updatedData = {
-        ...currentMonthData,
-        entries: [...currentMonthData.entries, newEntry]
-      };
-
-      setMonthlyData(prev => ({
-        ...prev,
-        [monthKey]: updatedData
-      }));
-
-      // Handle replacement logic
-      if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-        try {
-          await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
-          // Page should Automatically refresh via real time subscription
-        } catch (error) {
-          console.error('Error applying replacement:', error);
-          alert('Failed to apply replacement');
-          return;
-        }
-      }
-
-      setShowLeadModal(false);
-      setSelectedCell(null);
-      
-      // Update rotation state
-      updateRotationAfterAssignment(assignedRepId, newLead.unitCount >= 1000);
-      
-    } catch (error) {
-      console.error('Failed to save lead:', error);
-      alert('Failed to save lead. Please try again.');
-    }
-  };
+    
+    // Update rotation state
+    updateRotationAfterAssignment(assignedRepId, newLead.unitCount >= 1000);
+    
+  } catch (error) {
+    console.error('Failed to save lead:', error);
+    alert('Failed to save lead. Please try again.');
+    // Don't close modal on error - let user try again
+    throw error; // Re-throw so LeadModal knows there was an error
+  } finally {
+    // Always clean up operation tracking
+    setActiveSaveOperations(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(operationId);
+      console.log('Completed save operation:', operationId);
+      return newSet;
+    });
+  }
+};
 
   const handleCellClick = (day: number, repId: string) => {
     setSelectedCell({ day, repId });
