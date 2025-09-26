@@ -1,6 +1,7 @@
 // hooks/useReplacementState.ts
 import { useState, useEffect, useCallback } from 'react';
 import { ReplacementService } from '../services/replacementService';
+import { supabase } from '../lib/supabase';
 import { ReplacementState, ReplacementRecord } from '../features/leadReplacement';
 import { Lead } from '../types';
 
@@ -37,6 +38,7 @@ export const useReplacementState = () => {
       const newState = recordsToState(records);
       setReplacementState(newState);
       setError(null);
+      console.log('Replacement marks loaded:', newState);
     } catch (err) {
       console.error('Error loading replacement marks:', err);
       setError(err instanceof Error ? err.message : 'Failed to load replacement marks');
@@ -44,6 +46,35 @@ export const useReplacementState = () => {
       setLoading(false);
     }
   }, []);
+
+// IMPROVED: Set up real-time subscription with debouncing for replacement_marks table
+useEffect(() => {
+  loadReplacementMarks();
+
+  let timeoutId: NodeJS.Timeout;
+  
+  const channel = supabase
+    .channel('replacement_marks_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'replacement_marks' 
+    }, (payload) => {
+      console.log('Replacement marks changed:', payload);
+      
+      // FIXED: Debounce rapid changes to prevent race conditions
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        loadReplacementMarks();
+      }, 100); // 100ms debounce
+    })
+    .subscribe();
+
+  return () => {
+    clearTimeout(timeoutId);
+    supabase.removeChannel(channel);
+  };
+}, [loadReplacementMarks]);
 
   // Mark lead for replacement (save to database)
   const markLeadForReplacement = useCallback(async (lead: Lead) => {
@@ -175,34 +206,6 @@ export const useReplacementState = () => {
     }
   }, [replacementState, loadReplacementMarks]);
 
-  // Real-time subscription with auto page refresh for other users
-  useEffect(() => {
-    let isSubscribed = true;
-
-    const handleRealtimeChange = async (payload: any) => {
-      console.log('Replacement marks real-time update:', payload);
-      
-      if (!isSubscribed) return;
-
-      // Simply refresh the page for all users when any replacement changes occur
-      // This ensures all users see the changes immediately, just like a manual refresh
-      window.location.reload();
-    };
-
-    // Subscribe to real-time changes
-    const subscription = ReplacementService.subscribeToChanges(handleRealtimeChange);
-
-    return () => {
-      isSubscribed = false;
-      ReplacementService.unsubscribeFromChanges(subscription);
-    };
-  }, []);
-
-  // Load initial data on mount
-  useEffect(() => {
-    loadReplacementMarks();
-  }, [loadReplacementMarks]);
-
   return {
     replacementState,
     loading,
@@ -211,6 +214,6 @@ export const useReplacementState = () => {
     applyReplacement,
     removeLeadMark,
     undoReplacement,
-    reload: loadReplacementMarks,
+    loadReplacementMarks, // Expose for manual refresh if needed
   };
 };

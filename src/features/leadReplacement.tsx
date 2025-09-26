@@ -236,41 +236,7 @@ export const undoReplacementByDeletingReplacementLead = (
   }
 };
 
-/** Delete guard rules */
-export function canDeleteLead(
-  state: ReplacementState,
-  leadId: string
-): { allowed: boolean; reason?: string; isOriginalWithClosedReplacement?: boolean } {
-  if (!leadId || !state) {
-    return { allowed: true };
-  }
-  
-  try {
-    const rec = state.byLeadId[leadId]; // original?
-    if (rec) {
-      if (rec.replacedByLeadId) {
-        return {
-          allowed: false,
-          reason:
-            'This lead was marked for replacement and already has a replacement. Delete the replacement lead first to unlock this one.',
-          isOriginalWithClosedReplacement: true,
-        };
-      }
-      return { allowed: true };
-    }
-    
-    // is this a replacement?
-    const wasReplacementFor = Object.values(state.byLeadId || {}).find(
-      (r) => r && r.replacedByLeadId === leadId
-    );
-    
-    if (wasReplacementFor) return { allowed: true };
-    return { allowed: true };
-  } catch (error) {
-    console.error('Error checking delete permissions:', error);
-    return { allowed: true }; // Fail open
-  }
-}
+
 
 /** Build dropdown options for the Replace Lead toggle (usually open marks only) */
 export function buildReplacementOptions(

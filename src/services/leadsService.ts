@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { logAction } from './actionTracker'
+import { ReplacementService } from './replacementService'
 import type { Lead } from '../types'
 
 // DB row shape (snake_case from your schema)
@@ -62,13 +63,12 @@ export async function listLeads(): Promise<Lead[]> {
 export async function createLead(
   input: Omit<Lead, 'id'> & { id?: string }
 ): Promise<Lead> {
-  const id = input.id ?? `lead_${Date.now()}_${Math.random().toString(36).substring(2)}`
-  const leadData = { ...input, id } as Lead
-  const toInsert = leadToRow(leadData)
-
+  const id = input.id ?? `lead_${Date.now()}`
+  const newLead: Lead = { ...input, id }
+  
   const { data, error } = await supabase
     .from('leads')
-    .insert(toInsert)
+    .insert(leadToRow(newLead))
     .select()
     .single()
   
@@ -76,7 +76,6 @@ export async function createLead(
   
   const created = rowToLead(data as DBLeadRow)
   
-  // Log the action
   await logAction({
     actionType: 'CREATE',
     tableName: 'leads',
@@ -96,11 +95,9 @@ export async function updateLead(id: string, patch: Partial<Lead>): Promise<Lead
     .eq('id', id)
     .single()
   
-  const rowPatch = leadToRow({ ...patch, id } as Lead)
-  
   const { data, error } = await supabase
     .from('leads')
-    .update(rowPatch)
+    .update(leadToRow(patch as Lead))
     .eq('id', id)
     .select()
     .single()
@@ -109,7 +106,6 @@ export async function updateLead(id: string, patch: Partial<Lead>): Promise<Lead
   
   const updated = rowToLead(data as DBLeadRow)
   
-  // Log the action
   await logAction({
     actionType: 'UPDATE',
     tableName: 'leads',
@@ -148,8 +144,155 @@ export async function upsertLeads(leads: Lead[]): Promise<Lead[]> {
   return upserted
 }
 
-/** DELETE many leads by ids */
+/** ENHANCED DELETE with replacement cascade handling */
+export async function deleteLeadWithReplacementHandling(leadId: string): Promise<void> {
+  console.log(`Starting enhanced deletion for lead: ${leadId}`)
+  
+  try {
+    // Step 1: Check if this lead is a replacement for another lead
+    const { data: isReplacementData, error: isReplacementError } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .eq('replaced_by_lead_id', leadId)
+      .maybeSingle()
+    
+    if (isReplacementError) throw isReplacementError
+    
+    if (isReplacementData) {
+      console.log(`Lead ${leadId} is a replacement lead, reopening original mark: ${isReplacementData.lead_id}`)
+      // This lead replaced another - reopen the original mark
+      await ReplacementService.undoReplacement(isReplacementData.id)
+    }
+    
+    // Step 2: Check if this lead has a replacement
+    const { data: hasReplacementData, error: hasReplacementError } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .eq('lead_id', leadId)
+      .maybeSingle()
+    
+    if (hasReplacementError) throw hasReplacementError
+    
+    if (hasReplacementData && hasReplacementData.replaced_by_lead_id) {
+      console.log(`Lead ${leadId} has replacement ${hasReplacementData.replaced_by_lead_id}, deleting replacement first`)
+      // This lead has a replacement - delete replacement first (recursive call)
+      await deleteLeadWithReplacementHandling(hasReplacementData.replaced_by_lead_id)
+    }
+    
+    // Step 3: Remove any replacement marks for this lead
+    if (hasReplacementData) {
+      console.log(`Removing replacement mark for lead: ${leadId}`)
+      await ReplacementService.deleteReplacementMark(hasReplacementData.id)
+    }
+    
+    // Step 4: Get old data for logging before deletion
+    const { data: oldData } = await supabase
+      .from('leads')
+      .select('*')
+      .eq('id', leadId)
+      .single()
+    
+    // Step 5: Finally delete the lead itself
+    console.log(`Deleting lead from database: ${leadId}`)
+    const { error: deleteError } = await supabase
+      .from('leads')
+      .delete()
+      .eq('id', leadId)
+    
+    if (deleteError) throw deleteError
+    
+    // Step 6: Log the deletion
+    if (oldData) {
+      await logAction({
+        actionType: 'DELETE',
+        tableName: 'leads',
+        recordId: leadId,
+        oldData: rowToLead(oldData as DBLeadRow)
+      })
+    }
+    
+    console.log(`Successfully deleted lead with replacement handling: ${leadId}`)
+    
+  } catch (error) {
+    console.error(`Error in enhanced lead deletion for ${leadId}:`, error)
+    throw error
+  }
+}
+
+/** Helper function to check if a lead can be safely deleted */
+export async function checkLeadDeletionStatus(leadId: string): Promise<{
+  canDelete: boolean
+  isReplacement: boolean
+  hasReplacement: boolean
+  replacementLeadId?: string
+  originalLeadId?: string
+  warningMessage?: string
+}> {
+  try {
+    // Check if this lead is a replacement
+    const { data: isReplacementData } = await supabase
+      .from('replacement_marks')
+      .select('lead_id')
+      .eq('replaced_by_lead_id', leadId)
+      .maybeSingle()
+    
+    // Check if this lead has a replacement
+    const { data: hasReplacementData } = await supabase
+      .from('replacement_marks')
+      .select('replaced_by_lead_id')
+      .eq('lead_id', leadId)
+      .maybeSingle()
+    
+    const isReplacement = Boolean(isReplacementData)
+    const hasReplacement = Boolean(hasReplacementData?.replaced_by_lead_id)
+    
+    let warningMessage: string | undefined
+    
+    if (isReplacement && hasReplacement) {
+      warningMessage = 'This lead is both a replacement and has its own replacement. Deletion will cascade through the chain.'
+    } else if (isReplacement) {
+      warningMessage = 'This lead is replacing another lead. Deletion will reopen the original replacement request.'
+    } else if (hasReplacement) {
+      warningMessage = 'This lead has a replacement. Deletion will also remove the replacement lead.'
+    }
+    
+    return {
+      canDelete: true, // Enhanced deletion can always handle it
+      isReplacement,
+      hasReplacement,
+      replacementLeadId: hasReplacementData?.replaced_by_lead_id,
+      originalLeadId: isReplacementData?.lead_id,
+      warningMessage
+    }
+  } catch (error) {
+    console.error('Error checking lead deletion status:', error)
+    return {
+      canDelete: false,
+      isReplacement: false,
+      hasReplacement: false,
+      warningMessage: 'Error checking deletion status'
+    }
+  }
+}
+
+/** DELETE many leads by ids with replacement handling */
+export async function deleteLeadsWithReplacementHandling(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  
+  console.log(`Starting batch deletion with replacement handling for ${ids.length} leads`)
+  
+  // Process each lead individually to handle replacement logic
+  for (const id of ids) {
+    await deleteLeadWithReplacementHandling(id)
+  }
+  
+  console.log(`Completed batch deletion with replacement handling`)
+}
+
+/** Simple DELETE functions (legacy - for backwards compatibility) */
 export async function deleteLeads(ids: string[]): Promise<void> {
+  console.warn('Using legacy deleteLeads function - consider using deleteLeadsWithReplacementHandling for better replacement support')
+  
   if (!ids.length) return
   
   // Get old data for logging
@@ -178,8 +321,9 @@ export async function deleteLeads(ids: string[]): Promise<void> {
   }
 }
 
-/** DELETE one lead by id */
+/** Simple DELETE one lead by id (legacy - for backwards compatibility) */
 export async function deleteLead(id: string): Promise<void> {
+  console.warn('Using legacy deleteLead function - consider using deleteLeadWithReplacementHandling for better replacement support')
   await deleteLeads([id])
 }
 

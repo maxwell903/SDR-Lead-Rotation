@@ -7,6 +7,9 @@ import {
   upsertLeads,
   deleteLeads,
   deleteLead,
+  deleteLeadWithReplacementHandling,
+  deleteLeadsWithReplacementHandling,
+  checkLeadDeletionStatus,
   subscribeLeads,
 } from '../services/leadsService'
 
@@ -18,7 +21,7 @@ type State = {
 
 /**
  * React hook that exposes CRUD + realtime for leads.
- * Follows the same pattern as useSalesReps
+ * Enhanced with replacement cascade deletion handling
  */
 export function useLeads() {
   const [state, setState] = useState<State>({ leads: [], loading: true, error: null })
@@ -60,7 +63,8 @@ export function useLeads() {
       const toDelete: string[] = [...currentIds].filter(id => !nextIds.has(id))
 
       if (toDelete.length) {
-        await deleteLeads(toDelete)
+        // Use enhanced deletion for replacement cascade handling
+        await deleteLeadsWithReplacementHandling(toDelete)
       }
 
       // Upsert everything (new + updated)
@@ -105,8 +109,36 @@ export function useLeads() {
     }
   }
 
-  /** Delete a single lead by id */
+  /** Enhanced delete with replacement cascade handling */
   const removeLead = async (id: string) => {
+    try {
+      await deleteLeadWithReplacementHandling(id)
+      setState(s => ({
+        ...s,
+        leads: s.leads.filter(l => l.id !== id)
+      }))
+    } catch (e: any) {
+      setState(s => ({ ...s, error: e?.message ?? 'Failed to delete lead with replacement handling' }))
+      throw e
+    }
+  }
+
+  /** Enhanced bulk delete with replacement cascade handling */
+  const removeLeads = async (ids: string[]) => {
+    try {
+      await deleteLeadsWithReplacementHandling(ids)
+      setState(s => ({
+        ...s,
+        leads: s.leads.filter(l => !ids.includes(l.id))
+      }))
+    } catch (e: any) {
+      setState(s => ({ ...s, error: e?.message ?? 'Failed to delete leads with replacement handling' }))
+      throw e
+    }
+  }
+
+  /** Legacy delete functions (for backwards compatibility) */
+  const removeLeadSimple = async (id: string) => {
     try {
       await deleteLead(id)
       setState(s => ({
@@ -119,8 +151,7 @@ export function useLeads() {
     }
   }
 
-  /** Delete multiple leads by ids */
-  const removeLeads = async (ids: string[]) => {
+  const removeLeadsSimple = async (ids: string[]) => {
     try {
       await deleteLeads(ids)
       setState(s => ({
@@ -133,16 +164,36 @@ export function useLeads() {
     }
   }
 
+  /** Check if a lead can be safely deleted and get warning information */
+  const checkDeletionStatus = async (leadId: string) => {
+    try {
+      return await checkLeadDeletionStatus(leadId)
+    } catch (e: any) {
+      console.error('Error checking deletion status:', e)
+      return {
+        canDelete: false,
+        isReplacement: false,
+        hasReplacement: false,
+        warningMessage: 'Error checking deletion status'
+      }
+    }
+  }
+
   return {
     // State
     ...state,
     
     // Actions
     refresh,
-    updateLeads,     // Bulk update (like sales reps)
-    addLead,         // Single create
-    updateLead,      // Single update
-    removeLead,      // Single delete
-    removeLeads,     // Bulk delete
+    updateLeads,           // Bulk update (like sales reps)
+    addLead,              // Single create
+    updateLead,           // Single update
+    removeLead,           // Enhanced delete with replacement cascade
+    removeLeads,          // Enhanced bulk delete with replacement cascade
+    checkDeletionStatus,  // Check deletion status and warnings
+    
+    // Legacy functions (for backwards compatibility)
+    removeLeadSimple,     // Simple delete without replacement handling
+    removeLeadsSimple,    // Simple bulk delete without replacement handling
   }
 }

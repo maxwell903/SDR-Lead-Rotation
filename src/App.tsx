@@ -13,7 +13,6 @@ import {
   markLeadForReplacement,
   applyReplacement,
   undoReplacementByDeletingReplacementLead,
-  canDeleteLead,
   removeLeadMark,
   RotationLane,
 } from './features/leadReplacement';
@@ -218,7 +217,7 @@ const initialReps: SalesRep[] = [
 export default function App() {
   // 1) All hooks at the top – never behind conditionals or early returns
   const { salesReps, loading: repsLoading, error: repsError, updateSalesReps } = useSalesReps();
-  const { leads: dbLeads, loading: leadsLoading, addLead, updateLead, removeLead } = useLeads();
+  const { leads: dbLeads, loading: leadsLoading, addLead, updateLead, removeLead, checkDeletionStatus } = useLeads();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [monthlyData, setMonthlyData] = useState<{ [key: string]: MonthData }>({});
   const [rotationState, setRotationState] = useState<RotationState>({
@@ -652,12 +651,34 @@ export default function App() {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     const entry = currentMonthData.entries.find(e => e.id === entryId);
     
-    // Guard: Check if lead can be deleted
+    // Enhanced guard: Check if lead can be deleted and show warnings
     if (entry?.type === 'lead' && entry.leadId) {
-      const guard = canDeleteLead(replacementState, entry.leadId);
-      if (!guard.allowed) {
-        alert(guard.reason || 'This lead cannot be deleted due to replacement constraints.');
-        return;
+      try {
+        const deletionStatus = await checkDeletionStatus(entry.leadId);
+        
+        // Show warning message if there are replacement implications
+        if (deletionStatus.warningMessage) {
+          const confirmed = window.confirm(
+            `Warning: ${deletionStatus.warningMessage}\n\n` +
+            'Do you want to proceed with the deletion? This action cannot be undone.'
+          );
+          if (!confirmed) {
+            return;
+          }
+        }
+        
+        if (!deletionStatus.canDelete) {
+          alert(deletionStatus.warningMessage || 'This lead cannot be deleted.');
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking deletion status:', error);
+        const confirmed = window.confirm(
+          'Unable to verify deletion status. Do you want to proceed anyway? This action cannot be undone.'
+        );
+        if (!confirmed) {
+          return;
+        }
       }
     }
 
@@ -665,13 +686,19 @@ export default function App() {
       // Remove from local entries
       const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
       
-      // If it's a lead, delete from database
+            // If it's a lead, delete from database (using enhanced deletion)
       if (entry.leadId) {
         try {
           await removeLead(entry.leadId);
+          // Force refresh replacement state after successful deletion
+          // This ensures the rotation panel updates correctly
+          // The replacement state will be updated via real-time subscription
+          console.log('Lead deleted successfully with replacement handling');
         } catch (error) {
           console.error('Failed to delete lead from database:', error);
           alert('Failed to delete lead. Please try again.');
+          // Rollback the optimistic UI update on error
+          await refresh();
           return;
         }
       }
@@ -688,18 +715,8 @@ export default function App() {
         [monthKey]: updatedData
       }));
 
-      // Handle replacement bookkeeping
-      if (entry.type === 'lead' && entry.leadId) {
-        // Reopen the original mark if we just deleted the replacement lead
-        await dbUndoReplacement(entry.leadId!);
-
-        const rec = replacementState.byLeadId[entry.leadId!];
-        if (rec && !rec.replacedByLeadId) {
-          // Remove the mark from database (this will trigger real-time update)
-          dbRemoveLeadMark(entry.leadId!).catch(console.error);
-        }
-
-        // Recalculate skip counts
+      // Recalculate skip counts (for non-lead entries)
+      if (entry.type === 'skip') {
         const newSkipCounts: { [repId: string]: number } = {};
         updatedEntries.forEach(e => {
           if (e.type === 'skip') {
@@ -711,7 +728,7 @@ export default function App() {
           ...prev,
           skips: newSkipCounts
         }));
-      } // closes inner: if (entry.type === 'lead' && entry.leadId)
+      } 
     }   // closes outer: if (entry)
   };
 
@@ -911,3 +928,7 @@ export default function App() {
     </AuthWrapper>
   );
   }
+
+function refresh() {
+  throw new Error('Function not implemented.');
+}

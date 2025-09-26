@@ -384,49 +384,51 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
 
   // UPDATED: Apply replacement overlay for expanded view
   const overlayExpanded = (expandedItems: RotationItem[], lane: 'sub1k' | '1kplus'): RotationItem[] => {
-    try {
-      const openOrder = getOpenRepOrder(lane);
-      if (openOrder.length === 0) {
-        return expandedItems.map((item, index) => ({
-          ...item,
-          displayPosition: index + 1,
-          isNext: index === 0
-        }));
-      }
-
-      // For expanded view, we want to show the reps with open replacements at the top
-      // then continue with the normal sequence
-      const openRepIds = new Set(openOrder);
-      const finalItems: RotationItem[] = [];
-      
-      // Add open reps first (in chronological order)
-      openOrder.forEach(repId => {
-        const item = expandedItems.find(ei => ei.repId === repId);
-        if (item) {
-          finalItems.push({
-            ...item,
-            hasOpenReplacements: true
-          });
-        }
-      });
-      
-      // Add remaining items from expanded sequence, skipping duplicates
-      // Add the full expanded sequence (including open reps again so "everything in between" is visible)
-      expandedItems.forEach(item => {
-        finalItems.push(item);
-      });
-      
-      // Renumber display positions
-      return finalItems.map((item, index) => ({
+  try {
+    const openOrder = getOpenRepOrder(lane);
+    if (openOrder.length === 0) {
+      return expandedItems.map((item, index) => ({
         ...item,
         displayPosition: index + 1,
         isNext: index === 0
       }));
-    } catch (error) {
-      console.error('Error in overlayExpanded:', error);
-      return expandedItems;
     }
-  };
+
+    // For expanded view, we want to show the reps with open replacements at the top
+    // then continue with the normal sequence
+    const openRepIds = new Set(openOrder);
+    const finalItems: RotationItem[] = [];
+    
+    // Add open reps first (in chronological order)
+    openOrder.forEach(repId => {
+      const item = expandedItems.find(ei => ei.repId === repId);
+      if (item) {
+        finalItems.push({
+          ...item,
+          hasOpenReplacements: true
+        });
+      }
+    });
+    
+    // FIXED: Add remaining items from expanded sequence, PROPERLY skipping duplicates
+    expandedItems.forEach(item => {
+      // Only add if this rep is not already in finalItems
+      if (!finalItems.some(existingItem => existingItem.repId === item.repId)) {
+        finalItems.push(item);
+      }
+    });
+    
+    // Renumber display positions
+    return finalItems.map((item, index) => ({
+      ...item,
+      displayPosition: index + 1,
+      isNext: index === 0
+    }));
+  } catch (error) {
+    console.error('Error in overlayExpanded:', error);
+    return expandedItems;
+  }
+};
 
   // Calculate statistics for the summary
   const calculateStatistics = () => {
