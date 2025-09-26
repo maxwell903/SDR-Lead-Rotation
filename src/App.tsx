@@ -6,6 +6,7 @@ import SalesRepManager from './components/SalesRepManager';
 import LeadModal from './components/LeadModal';
 import ParametersPanel from './components/ParametersPanel';
 import { SalesRep, Lead, RotationState, LeadEntry, MonthData } from './types';
+import { useReplacementState } from './hooks/useReplacementState';
 import {
   ReplacementState,
   createEmptyReplacementState,
@@ -14,11 +15,15 @@ import {
   undoReplacementByDeletingReplacementLead,
   canDeleteLead,
   removeLeadMark,
+  RotationLane,
 } from './features/leadReplacement';
+
+
 import ConnectionTest from './components/ConnectionTest';
 import { useSalesReps } from './hooks/useSupabaseData';
 import AuthWrapper from './components/AuthWrapper';
 import { useLeads } from './hooks/useLeads';
+
 
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
@@ -229,7 +234,15 @@ export default function App() {
     normalRotationSub1k: [],
     normalRotationOver1k: []
   });
-  const [replacementState, setReplacementState] = useState<ReplacementState>(createEmptyReplacementState());
+  const {
+  replacementState,
+  loading: replacementLoading,
+  error: replacementError,
+  markLeadForReplacement: dbMarkLeadForReplacement,
+  applyReplacement: dbApplyReplacement,
+  removeLeadMark: dbRemoveLeadMark,
+  undoReplacement: dbUndoReplacement,
+} = useReplacementState();
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [showRepManager, setShowRepManager] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
@@ -393,6 +406,25 @@ export default function App() {
       return hasMatchingPropertyType;
     });
   };
+  const getReplacementAssignment = (originalLeadId: string) => {
+  const rec = replacementState.byLeadId[originalLeadId];
+  if (rec) {
+    return { repId: rec.repId, lane: rec.lane };
+  }
+  
+  // Fallback: search for lead in monthly data
+  for (const monthData of Object.values(monthlyData)) {
+    const lead = monthData.leads.find(l => l.id === originalLeadId);
+    if (lead) {
+      return { 
+        repId: lead.assignedTo, 
+        lane: (lead.unitCount >= 1000 ? 'over1k' : 'sub1k') as RotationLane
+      };
+    }
+  }
+  
+  return null;
+};
 
   const getNextInRotation = (leadData: any): string | null => {
     const eligibleReps = getEligibleReps(leadData);
@@ -444,6 +476,88 @@ export default function App() {
     const year = currentDate.getFullYear();
     const monthKey = `${year}-${month}`;
 
+    const handleUpdateEntry = async (entryId: string, updatedData: any) => {
+    const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
+    
+    setMonthlyData(prev => {
+      const currentData = prev[monthKey] || currentMonthData;
+      const existingEntry = currentData.entries.find(e => e.id === entryId);
+      
+      if (!existingEntry) return prev;
+
+      // Handle non-lead entries locally
+      if (updatedData.type !== 'lead') {
+        const updatedEntries = currentData.entries.map(entry => {
+          if (entry.id === entryId) {
+            return {
+              ...entry,
+              type: updatedData.type,
+              value: updatedData.type.toUpperCase(),
+              repId: updatedData.assignedTo || entry.repId,
+              rotationTarget: updatedData.rotationTarget || entry.rotationTarget
+            };
+          }
+          return entry;
+        });
+
+        return {
+          ...prev,
+          [monthKey]: {
+            ...currentData,
+            entries: updatedEntries
+          }
+        };
+      }
+
+      // Handle lead updates - save to database
+      if (existingEntry.leadId) {
+        // Update the lead in the database
+        updateLead(existingEntry.leadId, {
+          accountNumber: updatedData.accountNumber,
+          url: updatedData.url,
+          propertyTypes: updatedData.propertyTypes,
+          unitCount: updatedData.unitCount,
+          assignedTo: updatedData.assignedTo,
+          comments: updatedData.comments || []
+        }).catch(error => {
+          console.error('Failed to update lead:', error);
+          alert('Failed to update lead. Please try again.');
+        });
+
+        // Update local entry
+        const updatedEntries = currentData.entries.map(entry => {
+          if (entry.id === entryId) {
+            return {
+              ...entry,
+              repId: updatedData.assignedTo,
+              value: updatedData.accountNumber,
+              url: updatedData.url,
+              comments: updatedData.comments || [],
+              unitCount: updatedData.unitCount,
+              rotationTarget: (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k'
+            };
+          }
+          return entry;
+        });
+
+        return {
+          ...prev,
+          [monthKey]: {
+            ...currentData,
+            entries: updatedEntries
+            // leads come from DB via hook
+          }
+        };
+      }
+
+      return prev;
+    });
+
+    setShowLeadModal(false);
+    setSelectedCell(null);
+    setEditingEntry(null);
+  };
+
     // Handle updates to existing entries
     if (leadData.isEditing && leadData.editingEntryId) {
       await handleUpdateEntry(leadData.editingEntryId, leadData);
@@ -486,15 +600,8 @@ export default function App() {
     }
 
     // Handle lead assignment
-    let assignedRepId = leadData.assignedTo;
-    
-    if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-      const assignment = getReplacementAssignment(leadData.originalLeadIdToReplace);
-      if (assignment) {
-        assignedRepId = assignment.repId;
-      }
-    }
-    
+     let assignedRepId = leadData.assignedTo;
+
     if (!assignedRepId) {
       assignedRepId = getNextInRotation(leadData);
     }
@@ -547,9 +654,13 @@ export default function App() {
 
       // Handle replacement logic
       if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-        setReplacementState(prev =>
-          applyReplacement(prev, leadData.originalLeadIdToReplace, newLead)
-        );
+        try {
+  await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
+} catch (error) {
+  console.error('Error applying replacement:', error);
+  alert('Failed to apply replacement');
+  return;
+}
       }
 
       setShowLeadModal(false);
@@ -610,16 +721,16 @@ export default function App() {
       }));
 
       // Handle replacement bookkeeping
+            // Handle replacement bookkeeping
       if (entry.type === 'lead' && entry.leadId) {
-        setReplacementState(prev =>
-          undoReplacementByDeletingReplacementLead(prev, entry.leadId!)
-        );
+        // Reopen the original mark if we just deleted the replacement lead
+        await dbUndoReplacement(entry.leadId!);
 
-        const rec = replacementState.byLeadId[entry.leadId!];
+      const rec = replacementState.byLeadId[entry.leadId!];
         if (rec && !rec.replacedByLeadId) {
-          setReplacementState(prev => removeLeadMark(prev, entry.leadId!));
+          // Remove the mark from database (this will trigger real-time update)
+          dbRemoveLeadMark(entry.leadId!).catch(console.error);
         }
-      }
 
       // Recalculate skip counts
       const newSkipCounts: { [repId: string]: number } = {};
@@ -629,12 +740,13 @@ export default function App() {
         }
       });
 
-      setRotationState(prev => ({
+            setRotationState(prev => ({
         ...prev,
         skips: newSkipCounts
       }));
-    }
-  };
+    } // closes inner: if (entry.type === 'lead' && entry.leadId)
+  }   // closes outer: if (entry)
+};
 
   const handleEditEntry = (entry: LeadEntry) => {
     setEditingEntry(entry);
@@ -642,7 +754,7 @@ export default function App() {
     setShowLeadModal(true);
   };
 
-  const handleMarkForReplacement = (leadId: string) => {
+  const handleMarkForReplacement = async (leadId: string) => {
     // Search across months for the lead data
     let targetLead: Lead | undefined;
     
@@ -663,35 +775,28 @@ export default function App() {
     
     if (!targetLead) {
       console.error('Lead not found for marking:', leadId);
+      alert('Lead not found');
       return;
     }
     
-    setReplacementState(prev => markLeadForReplacement(prev, targetLead!));
+    try {
+      await dbMarkLeadForReplacement(targetLead);
+    } catch (error) {
+      console.error('Error marking lead for replacement:', error);
+      alert('Failed to mark lead for replacement');
+    }
   };
 
   // Helper function for replacement assignment lookup
-  const getReplacementAssignment = (originalLeadId: string) => {
-    const rec = replacementState.byLeadId[originalLeadId];
-    if (rec) {
-      return { repId: rec.repId, lane: rec.lane };
-    }
-    
-    // Fallback: search for lead in monthly data
-    for (const monthData of Object.values(monthlyData)) {
-      const lead = monthData.leads.find(l => l.id === originalLeadId);
-      if (lead) {
-        return { 
-          repId: lead.assignedTo, 
-          lane: lead.unitCount >= 1000 ? '1kplus' as const : 'sub1k' as const 
-        };
-      }
-    }
-    
-    return null;
-  };
+   
 
-  const handleRemoveReplacementMark = (leadId: string) => {
-    setReplacementState(prev => removeLeadMark(prev, leadId));
+   const handleRemoveReplacementMark = async (leadId: string) => {
+    try {
+      await dbRemoveLeadMark(leadId);
+    } catch (error) {
+      console.error('Error removing replacement mark:', error);
+      alert('Failed to remove replacement mark');
+    }
   };
 
    const handleUpdateEntry = async (entryId: string, updatedData: any) => {
@@ -874,7 +979,11 @@ export default function App() {
           </div>
         </div>
       </div>
-
+       {replacementError && (
+          <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+            Replacement Error: {replacementError}
+          </div>
+        )}
       {showLeadModal && (
         <LeadModal
           onClose={() => {
@@ -890,8 +999,9 @@ export default function App() {
           getEligibleReps={getEligibleReps}
           getNextInRotation={getNextInRotation}
           leads={currentMonthData.leads}
-          monthlyData={monthlyData}
           replacementState={replacementState}
+          monthlyData={monthlyData}
+          
         />
       )}
 
@@ -914,4 +1024,4 @@ export default function App() {
     </div>
     </AuthWrapper>
   );
-}
+  }
