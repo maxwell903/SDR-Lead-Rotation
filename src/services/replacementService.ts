@@ -131,8 +131,10 @@ export class ReplacementService {
     return data ? dbToAppFormat(data) : null;
   }
 
-  // Subscribe to real-time changes
+  // ENHANCED: Subscribe to real-time changes with better event handling
   static subscribeToChanges(callback: (payload: any) => void) {
+    console.log('Setting up real-time subscription for replacement_marks');
+    
     return supabase
       .channel('replacement_marks_changes')
       .on('postgres_changes', 
@@ -141,13 +143,31 @@ export class ReplacementService {
           schema: 'public', 
           table: 'replacement_marks' 
         }, 
-        callback
+        (payload) => {
+          console.log('Real-time replacement mark change detected:', payload);
+          
+          // Enhanced payload with event type
+          const enhancedPayload = {
+            ...payload,
+            eventType: payload.eventType || 'UPDATE', // Fallback
+          };
+          
+          callback(enhancedPayload);
+        }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Replacement marks subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to replacement marks changes');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Error subscribing to replacement marks changes');
+        }
+      });
   }
 
   // Unsubscribe from real-time changes
   static unsubscribeFromChanges(subscription: any) {
+    console.log('Unsubscribing from replacement marks changes');
     return supabase.removeChannel(subscription);
   }
 }

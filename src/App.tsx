@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Settings, UserPlus } from 'lucide-react';
 import CalendarGrid from './components/CalendarGrid';
 import RotationPanel from './components/RotationPanel';
@@ -18,12 +18,10 @@ import {
   RotationLane,
 } from './features/leadReplacement';
 
-
 import ConnectionTest from './components/ConnectionTest';
 import { useSalesReps } from './hooks/useSupabaseData';
 import AuthWrapper from './components/AuthWrapper';
 import { useLeads } from './hooks/useLeads';
-
 
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
@@ -234,63 +232,70 @@ export default function App() {
     normalRotationSub1k: [],
     normalRotationOver1k: []
   });
+
+    
   const {
-  replacementState,
-  loading: replacementLoading,
-  error: replacementError,
-  markLeadForReplacement: dbMarkLeadForReplacement,
-  applyReplacement: dbApplyReplacement,
-  removeLeadMark: dbRemoveLeadMark,
-  undoReplacement: dbUndoReplacement,
-} = useReplacementState();
+    replacementState,
+    loading: replacementLoading,
+    error: replacementError,
+    markLeadForReplacement: dbMarkLeadForReplacement,
+    applyReplacement: dbApplyReplacement,
+    removeLeadMark: dbRemoveLeadMark,
+    undoReplacement: dbUndoReplacement,
+  } = useReplacementState();
+
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [showRepManager, setShowRepManager] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
   const [selectedCell, setSelectedCell] = useState<{ day: number; repId: string } | null>(null);
   const [editingEntry, setEditingEntry] = useState<LeadEntry | null>(null);
+  
 
   // 2) Derived values (fine to compute every render)
   const daysInMonth = getDaysInMonth(currentDate);
   const monthName = formatMonth(currentDate);
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
+  
+  // UPDATED: Enhanced currentMonthData with forceRefresh dependency
   const currentMonthData = useMemo(() => {
-  const existing = monthlyData[monthKey];
-  
-  // Get leads from DB for current month
-  const currentMonthLeads = dbLeads.filter(lead => 
-    lead.month === currentDate.getMonth() + 1 && 
-    lead.year === currentDate.getFullYear()
-  );
-  
-  // Always reconstruct entries from DB leads
-  const entriesFromDbLeads: LeadEntry[] = currentMonthLeads.map(lead => ({
-    id: `entry_${lead.id}`,
-    day: new Date(lead.date).getDate(),
-    repId: lead.assignedTo,
-    type: 'lead' as const,
-    value: lead.accountNumber,
-    url: lead.url,
-    comments: lead.comments,
-    leadId: lead.id,
-    month: currentDate.getMonth(),
-    year: currentDate.getFullYear(),
-    unitCount: lead.unitCount,
-    rotationTarget: lead.unitCount >= 1000 ? 'over1k' : 'sub1k'
-  }));
-  
-  // Get non-lead entries from local state (skip, ooo, next)
-  const nonLeadEntries = existing?.entries.filter(entry => entry.type !== 'lead') || [];
-  
-  return {
-    month: currentDate.getMonth(),
-    year: currentDate.getFullYear(),
-    leads: currentMonthLeads,
-    entries: [...entriesFromDbLeads, ...nonLeadEntries] // Combine DB leads + local non-lead entries
-  };
-}, [monthlyData, monthKey, currentDate, dbLeads]); // ← dbLeads dependency ensures updates
+    const existing = monthlyData[monthKey];
+    
+    // Get leads from DB for current month
+    const currentMonthLeads = dbLeads.filter(lead => 
+      lead.month === currentDate.getMonth() + 1 && 
+      lead.year === currentDate.getFullYear()
+    );
+    
+    // Always reconstruct entries from DB leads
+    const entriesFromDbLeads: LeadEntry[] = currentMonthLeads.map(lead => ({
+      id: `entry_${lead.id}`,
+      day: new Date(lead.date).getDate(),
+      repId: lead.assignedTo,
+      type: 'lead' as const,
+      value: lead.accountNumber,
+      url: lead.url,
+      comments: lead.comments,
+      leadId: lead.id,
+      month: currentDate.getMonth(),
+      year: currentDate.getFullYear(),
+      unitCount: lead.unitCount,
+      rotationTarget: lead.unitCount >= 1000 ? 'over1k' : 'sub1k'
+    }));
+    
+    // Get non-lead entries from local state (skip, ooo, next)
+    const nonLeadEntries = existing?.entries.filter(entry => entry.type !== 'lead') || [];
+    
+    return {
+      month: currentDate.getMonth(),
+      year: currentDate.getFullYear(),
+      leads: currentMonthLeads,
+      entries: [...entriesFromDbLeads, ...nonLeadEntries] // Combine DB leads + local non-lead entries
+    };
+  }, [monthlyData, monthKey, currentDate, dbLeads,]); // Added forceRefresh dependency
 
+  
 
-  // 3) Effects (still above render guards)
+  // UPDATED: Enhanced rotation state calculation with forceRefresh dependency
   useEffect(() => {
     const sub1kReps = salesReps
       .filter(rep => rep.status === 'active')
@@ -322,50 +327,10 @@ export default function App() {
       next1kPlus,
       skips: skipCounts
     }));
-   }, [salesReps, monthKey, monthlyData, replacementState]);
+  }, [salesReps, monthKey, monthlyData, replacementState, ]); // Added forceRefresh dependency
 
   // 4) Render guards AFTER all hooks
- 
-
-  // Initialize and update rotation state based on sales reps and current data
-  useEffect(() => {
-    const sub1kReps = salesReps
-      .filter(rep => rep.status === 'active')
-      .sort((a, b) => a.sub1kOrder - b.sub1kOrder);
-    
-    const over1kReps = salesReps
-      .filter(rep => rep.status === 'active' && rep.parameters.canHandle1kPlus)
-      .sort((a, b) => (a.over1kOrder || 0) - (b.over1kOrder || 0));
-
-    // Base order should ALWAYS be the original manage reps order
-    const baseOrderSub1k = sub1kReps.map(rep => rep.id);
-    const baseOrderOver1k = over1kReps.map(rep => rep.id);
-
-    // Calculate who's next based on current hit counts (including replacement logic)
-    const nextSub1k = calculateNextInRotation(baseOrderSub1k, currentMonthData.entries, currentMonthData.leads, false, replacementState);
-    const next1kPlus = calculateNextInRotation(baseOrderOver1k, currentMonthData.entries, currentMonthData.leads, true, replacementState);
-
-    // Calculate current skip counts for legacy compatibility
-    const skipCounts: { [repId: string]: number } = {};
-    currentMonthData.entries.forEach(entry => {
-      if (entry.type === 'skip') {
-        skipCounts[entry.repId] = (skipCounts[entry.repId] || 0) + 1;
-      }
-    });
-
-    setRotationState(prev => ({
-      ...prev,
-      normalRotationSub1k: baseOrderSub1k,
-      normalRotationOver1k: baseOrderOver1k,
-      actualRotationSub1k: [...baseOrderSub1k],
-      actualRotationOver1k: [...baseOrderOver1k],
-      nextSub1k: nextSub1k,
-      next1kPlus: next1kPlus,
-      skips: skipCounts
-    }));
-  }, [salesReps, monthKey, monthlyData, replacementState]);
-
-   if (repsLoading) {
+  if (repsLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -375,6 +340,7 @@ export default function App() {
       </div>
     );
   }
+  
   if (repsError) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -406,25 +372,26 @@ export default function App() {
       return hasMatchingPropertyType;
     });
   };
+
   const getReplacementAssignment = (originalLeadId: string) => {
-  const rec = replacementState.byLeadId[originalLeadId];
-  if (rec) {
-    return { repId: rec.repId, lane: rec.lane };
-  }
-  
-  // Fallback: search for lead in monthly data
-  for (const monthData of Object.values(monthlyData)) {
-    const lead = monthData.leads.find(l => l.id === originalLeadId);
-    if (lead) {
-      return { 
-        repId: lead.assignedTo, 
-        lane: (lead.unitCount >= 1000 ? 'over1k' : 'sub1k') as RotationLane
-      };
+    const rec = replacementState.byLeadId[originalLeadId];
+    if (rec) {
+      return { repId: rec.repId, lane: rec.lane };
     }
-  }
-  
-  return null;
-};
+    
+    // Fallback: search for lead in monthly data
+    for (const monthData of Object.values(monthlyData)) {
+      const lead = monthData.leads.find(l => l.id === originalLeadId);
+      if (lead) {
+        return { 
+          repId: lead.assignedTo, 
+          lane: (lead.unitCount >= 1000 ? 'over1k' : 'sub1k') as RotationLane
+        };
+      }
+    }
+    
+    return null;
+  };
 
   const getNextInRotation = (leadData: any): string | null => {
     const eligibleReps = getEligibleReps(leadData);
@@ -471,12 +438,7 @@ export default function App() {
     setCurrentDate(direction === 'next' ? addMonths(currentDate, 1) : addMonths(currentDate, -1));
   };
 
-    const handleAddLead = async (leadData: any) => {
-    const month = currentDate.getMonth();
-    const year = currentDate.getFullYear();
-    const monthKey = `${year}-${month}`;
-
-    const handleUpdateEntry = async (entryId: string, updatedData: any) => {
+  const handleUpdateEntry = async (entryId: string, updatedData: any) => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     
     setMonthlyData(prev => {
@@ -558,6 +520,11 @@ export default function App() {
     setEditingEntry(null);
   };
 
+  const handleAddLead = async (leadData: any) => {
+    const month = currentDate.getMonth();
+    const year = currentDate.getFullYear();
+    const monthKey = `${year}-${month}`;
+
     // Handle updates to existing entries
     if (leadData.isEditing && leadData.editingEntryId) {
       await handleUpdateEntry(leadData.editingEntryId, leadData);
@@ -600,7 +567,7 @@ export default function App() {
     }
 
     // Handle lead assignment
-     let assignedRepId = leadData.assignedTo;
+    let assignedRepId = leadData.assignedTo;
 
     if (!assignedRepId) {
       assignedRepId = getNextInRotation(leadData);
@@ -655,12 +622,13 @@ export default function App() {
       // Handle replacement logic
       if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
         try {
-  await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
-} catch (error) {
-  console.error('Error applying replacement:', error);
-  alert('Failed to apply replacement');
-  return;
-}
+          await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
+          // Page should Automatically refresh via real time subscription
+        } catch (error) {
+          console.error('Error applying replacement:', error);
+          alert('Failed to apply replacement');
+          return;
+        }
       }
 
       setShowLeadModal(false);
@@ -721,32 +689,31 @@ export default function App() {
       }));
 
       // Handle replacement bookkeeping
-            // Handle replacement bookkeeping
       if (entry.type === 'lead' && entry.leadId) {
         // Reopen the original mark if we just deleted the replacement lead
         await dbUndoReplacement(entry.leadId!);
 
-      const rec = replacementState.byLeadId[entry.leadId!];
+        const rec = replacementState.byLeadId[entry.leadId!];
         if (rec && !rec.replacedByLeadId) {
           // Remove the mark from database (this will trigger real-time update)
           dbRemoveLeadMark(entry.leadId!).catch(console.error);
         }
 
-      // Recalculate skip counts
-      const newSkipCounts: { [repId: string]: number } = {};
-      updatedEntries.forEach(e => {
-        if (e.type === 'skip') {
-          newSkipCounts[e.repId] = (newSkipCounts[e.repId] || 0) + 1;
-        }
-      });
+        // Recalculate skip counts
+        const newSkipCounts: { [repId: string]: number } = {};
+        updatedEntries.forEach(e => {
+          if (e.type === 'skip') {
+            newSkipCounts[e.repId] = (newSkipCounts[e.repId] || 0) + 1;
+          }
+        });
 
-            setRotationState(prev => ({
-        ...prev,
-        skips: newSkipCounts
-      }));
-    } // closes inner: if (entry.type === 'lead' && entry.leadId)
-  }   // closes outer: if (entry)
-};
+        setRotationState(prev => ({
+          ...prev,
+          skips: newSkipCounts
+        }));
+      } // closes inner: if (entry.type === 'lead' && entry.leadId)
+    }   // closes outer: if (entry)
+  };
 
   const handleEditEntry = (entry: LeadEntry) => {
     setEditingEntry(entry);
@@ -754,6 +721,7 @@ export default function App() {
     setShowLeadModal(true);
   };
 
+  // UPDATED: Enhanced handleMarkForReplacement with immediate UI refresh
   const handleMarkForReplacement = async (leadId: string) => {
     // Search across months for the lead data
     let targetLead: Lead | undefined;
@@ -781,104 +749,22 @@ export default function App() {
     
     try {
       await dbMarkLeadForReplacement(targetLead);
+      // Page will auto-refresh via real-time subscription
     } catch (error) {
       console.error('Error marking lead for replacement:', error);
       alert('Failed to mark lead for replacement');
     }
   };
 
-  // Helper function for replacement assignment lookup
-   
-
-   const handleRemoveReplacementMark = async (leadId: string) => {
+  // UPDATED: Enhanced handleRemoveReplacementMark with immediate UI refresh
+  const handleRemoveReplacementMark = async (leadId: string) => {
     try {
       await dbRemoveLeadMark(leadId);
+      // Page will auto-refresh via real-time subscription
     } catch (error) {
       console.error('Error removing replacement mark:', error);
       alert('Failed to remove replacement mark');
     }
-  };
-
-   const handleUpdateEntry = async (entryId: string, updatedData: any) => {
-    const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
-    
-    setMonthlyData(prev => {
-      const currentData = prev[monthKey] || currentMonthData;
-      const existingEntry = currentData.entries.find(e => e.id === entryId);
-      
-      if (!existingEntry) return prev;
-
-      // Handle non-lead entries locally
-      if (updatedData.type !== 'lead') {
-        const updatedEntries = currentData.entries.map(entry => {
-          if (entry.id === entryId) {
-            return {
-              ...entry,
-              type: updatedData.type,
-              value: updatedData.type.toUpperCase(),
-              repId: updatedData.assignedTo || entry.repId,
-              rotationTarget: updatedData.rotationTarget || entry.rotationTarget
-            };
-          }
-          return entry;
-        });
-
-        return {
-          ...prev,
-          [monthKey]: {
-            ...currentData,
-            entries: updatedEntries
-          }
-        };
-      }
-
-      // Handle lead updates - save to database
-      if (existingEntry.leadId) {
-        // Update the lead in the database
-        updateLead(existingEntry.leadId, {
-          accountNumber: updatedData.accountNumber,
-          url: updatedData.url,
-          propertyTypes: updatedData.propertyTypes,
-          unitCount: updatedData.unitCount,
-          assignedTo: updatedData.assignedTo,
-          comments: updatedData.comments || []
-        }).catch(error => {
-          console.error('Failed to update lead:', error);
-          alert('Failed to update lead. Please try again.');
-        });
-
-        // Update local entry
-        const updatedEntries = currentData.entries.map(entry => {
-          if (entry.id === entryId) {
-            return {
-              ...entry,
-              repId: updatedData.assignedTo,
-              value: updatedData.accountNumber,
-              url: updatedData.url,
-              comments: updatedData.comments || [],
-              unitCount: updatedData.unitCount,
-              rotationTarget: (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k'
-            };
-          }
-          return entry;
-        });
-
-        return {
-          ...prev,
-          [monthKey]: {
-            ...currentData,
-            entries: updatedEntries
-            // leads come from DB via hook
-          }
-        };
-      }
-
-      return prev;
-    });
-
-    setShowLeadModal(false);
-    setSelectedCell(null);
-    setEditingEntry(null);
   };
 
   const getCurrentDay = (): number => {
@@ -889,8 +775,8 @@ export default function App() {
   };
 
   const handleRepUpdate = (updatedReps: SalesRep[]) => {
-  updateSalesReps(updatedReps);
-};
+    updateSalesReps(updatedReps);
+  };
 
   return (
     <AuthWrapper>

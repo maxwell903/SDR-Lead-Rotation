@@ -74,11 +74,13 @@ export const useReplacementState = () => {
       }));
 
       setError(null);
+      
     } catch (err) {
       console.error('Error marking lead for replacement:', err);
       setError(err instanceof Error ? err.message : 'Failed to mark lead for replacement');
+      await loadReplacementMarks();
     }
-  }, [replacementState]);
+  }, [replacementState, loadReplacementMarks]);
 
   // Apply replacement (save to database)
   const applyReplacement = useCallback(async (originalLeadId: string, newLead: Lead) => {
@@ -97,7 +99,7 @@ export const useReplacementState = () => {
         newLead.id
       );
 
-      // Update local state
+      // Update local state immediately
       setReplacementState(prev => ({
         ...prev,
         byLeadId: { ...prev.byLeadId, [originalLeadId]: updatedRecord },
@@ -107,8 +109,9 @@ export const useReplacementState = () => {
     } catch (err) {
       console.error('Error applying replacement:', err);
       setError(err instanceof Error ? err.message : 'Failed to apply replacement');
+      await loadReplacementMarks();
     }
-  }, [replacementState]);
+  }, [replacementState, loadReplacementMarks]);
 
   // Remove lead mark (delete from database)
   const removeLeadMark = useCallback(async (leadId: string) => {
@@ -125,7 +128,7 @@ export const useReplacementState = () => {
 
       await ReplacementService.deleteReplacementMark(record.markId);
 
-      // Update local state
+      // Update local state immediately
       setReplacementState(prev => {
         const newByLeadId = { ...prev.byLeadId };
         delete newByLeadId[leadId];
@@ -137,8 +140,9 @@ export const useReplacementState = () => {
     } catch (err) {
       console.error('Error removing lead mark:', err);
       setError(err instanceof Error ? err.message : 'Failed to remove lead mark');
+      await loadReplacementMarks();
     }
-  }, [replacementState]);
+  }, [replacementState, loadReplacementMarks]);
 
   // Undo replacement (update database)
   const undoReplacement = useCallback(async (replacementLeadId: string) => {
@@ -154,7 +158,7 @@ export const useReplacementState = () => {
       const record = replacementState.byLeadId[originalId];
       const updatedRecord = await ReplacementService.undoReplacement(record.markId);
 
-      // Update local state
+      // Update local state immediately
       setReplacementState(prev => {
         const queue = prev.queue.includes(originalId) ? prev.queue : [...prev.queue, originalId];
         return {
@@ -167,28 +171,34 @@ export const useReplacementState = () => {
     } catch (err) {
       console.error('Error undoing replacement:', err);
       setError(err instanceof Error ? err.message : 'Failed to undo replacement');
+      await loadReplacementMarks();
     }
-  }, [replacementState]);
+  }, [replacementState, loadReplacementMarks]);
 
-  // Handle real-time updates
+  // Real-time subscription with auto page refresh for other users
   useEffect(() => {
-    const handleRealtimeChange = (payload: any) => {
+    let isSubscribed = true;
+
+    const handleRealtimeChange = async (payload: any) => {
       console.log('Replacement marks real-time update:', payload);
       
-      // Reload all data to ensure consistency
-      // In production, you might want to handle individual changes more efficiently
-      loadReplacementMarks();
+      if (!isSubscribed) return;
+
+      // Simply refresh the page for all users when any replacement changes occur
+      // This ensures all users see the changes immediately, just like a manual refresh
+      window.location.reload();
     };
 
     // Subscribe to real-time changes
     const subscription = ReplacementService.subscribeToChanges(handleRealtimeChange);
 
     return () => {
+      isSubscribed = false;
       ReplacementService.unsubscribeFromChanges(subscription);
     };
-  }, [loadReplacementMarks]);
+  }, []);
 
-  // Load initial data
+  // Load initial data on mount
   useEffect(() => {
     loadReplacementMarks();
   }, [loadReplacementMarks]);
