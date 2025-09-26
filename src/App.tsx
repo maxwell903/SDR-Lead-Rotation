@@ -17,6 +17,7 @@ import {
 } from './features/leadReplacement';
 import ConnectionTest from './components/ConnectionTest';
 import { useSalesReps } from './hooks/useSupabaseData';
+import AuthWrapper from './components/AuthWrapper';
 
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
@@ -795,6 +796,7 @@ export default function App() {
 };
 
   return (
+    <AuthWrapper>
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 py-4">
@@ -920,5 +922,6 @@ export default function App() {
       <ConnectionTest />
       
     </div>
+    </AuthWrapper>
   );
 }
