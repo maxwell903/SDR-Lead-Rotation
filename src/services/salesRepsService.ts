@@ -115,6 +115,7 @@ export async function deleteSalesReps(ids: string[]): Promise<void> {
   if (error) throw error
 }
 
+
 /** Realtime subscription */
 export function subscribeSalesReps(onChange: () => void): () => void {
   const channel = supabase
