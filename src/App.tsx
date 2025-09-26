@@ -241,29 +241,41 @@ export default function App() {
   const monthName = formatMonth(currentDate);
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
   const currentMonthData = useMemo(() => {
-    const existing = monthlyData[monthKey];
-    
-    // Get leads from DB for current month
-    const currentMonthLeads = dbLeads.filter(lead => 
-      lead.month === currentDate.getMonth() + 1 && // DB stores 1-12, Date uses 0-11
-      lead.year === currentDate.getFullYear()
-    );
-    
-    if (existing) {
-      return {
-        ...existing,
-        leads: currentMonthLeads.length > 0 ? currentMonthLeads : existing.leads // Use DB leads if available
-      };
-    }
-    
-    // Stable fallback
-    return {
-      month: currentDate.getMonth(),
-      year: currentDate.getFullYear(),
-      leads: currentMonthLeads, // Use DB leads
-      entries: [],
-    };
-  }, [monthlyData, monthKey, currentDate, dbLeads]);
+  const existing = monthlyData[monthKey];
+  
+  // Get leads from DB for current month
+  const currentMonthLeads = dbLeads.filter(lead => 
+    lead.month === currentDate.getMonth() + 1 && 
+    lead.year === currentDate.getFullYear()
+  );
+  
+  // Always reconstruct entries from DB leads
+  const entriesFromDbLeads: LeadEntry[] = currentMonthLeads.map(lead => ({
+    id: `entry_${lead.id}`,
+    day: new Date(lead.date).getDate(),
+    repId: lead.assignedTo,
+    type: 'lead' as const,
+    value: lead.accountNumber,
+    url: lead.url,
+    comments: lead.comments,
+    leadId: lead.id,
+    month: currentDate.getMonth(),
+    year: currentDate.getFullYear(),
+    unitCount: lead.unitCount,
+    rotationTarget: lead.unitCount >= 1000 ? 'over1k' : 'sub1k'
+  }));
+  
+  // Get non-lead entries from local state (skip, ooo, next)
+  const nonLeadEntries = existing?.entries.filter(entry => entry.type !== 'lead') || [];
+  
+  return {
+    month: currentDate.getMonth(),
+    year: currentDate.getFullYear(),
+    leads: currentMonthLeads,
+    entries: [...entriesFromDbLeads, ...nonLeadEntries] // Combine DB leads + local non-lead entries
+  };
+}, [monthlyData, monthKey, currentDate, dbLeads]); // ← dbLeads dependency ensures updates
+
 
   // 3) Effects (still above render guards)
   useEffect(() => {
