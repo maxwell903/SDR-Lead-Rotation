@@ -48,7 +48,7 @@ const SalesRepManager: React.FC<SalesRepManagerProps> = ({
         over1kOrder: undefined,
         status: 'active'
       };
-      setReps([...reps, newRep]);
+      setReps(prev => [...prev, newRep]);
       setNewRepName('');
     }
   };

@@ -15,6 +15,8 @@ import {
   canDeleteLead,
   removeLeadMark,
 } from './features/leadReplacement';
+import ConnectionTest from './components/ConnectionTest';
+import { useSalesReps } from './hooks/useSupabaseData';
 
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
@@ -209,8 +211,9 @@ const initialReps: SalesRep[] = [
 ];
 
 export default function App() {
+  // 1) All hooks at the top – never behind conditionals or early returns
+  const { salesReps, loading: repsLoading, error: repsError, updateSalesReps } = useSalesReps();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [salesReps, setSalesReps] = useState<SalesRep[]>(initialReps);
   const [monthlyData, setMonthlyData] = useState<{ [key: string]: MonthData }>({});
   const [rotationState, setRotationState] = useState<RotationState>({
     sub1kRotation: [],
@@ -223,27 +226,64 @@ export default function App() {
     normalRotationSub1k: [],
     normalRotationOver1k: []
   });
-  
-  // Lead replacement state
-  const [replacementState, setReplacementState] = useState<ReplacementState>(
-    createEmptyReplacementState()
-  );
-
+  const [replacementState, setReplacementState] = useState<ReplacementState>(createEmptyReplacementState());
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [showRepManager, setShowRepManager] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
   const [selectedCell, setSelectedCell] = useState<{ day: number; repId: string } | null>(null);
   const [editingEntry, setEditingEntry] = useState<LeadEntry | null>(null);
 
+  // 2) Derived values (fine to compute every render)
   const daysInMonth = getDaysInMonth(currentDate);
   const monthName = formatMonth(currentDate);
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
-  const currentMonthData = monthlyData[monthKey] || { 
-    month: currentDate.getMonth(), 
-    year: currentDate.getFullYear(), 
-    leads: [], 
-    entries: [] 
-  };
+    const currentMonthData = useMemo(() => {
+    const existing = monthlyData[monthKey];
+    if (existing) return existing;
+    // Stable fallback until the month gets data
+    return {
+      month: currentDate.getMonth(),
+      year: currentDate.getFullYear(),
+      leads: [],
+      entries: [],
+    };
+  }, [monthlyData, monthKey, currentDate]);
+  // 3) Effects (still above render guards)
+  useEffect(() => {
+    const sub1kReps = salesReps
+      .filter(rep => rep.status === 'active')
+      .sort((a, b) => a.sub1kOrder - b.sub1kOrder);
+    const over1kReps = salesReps
+      .filter(rep => rep.status === 'active' && rep.parameters.canHandle1kPlus)
+      .sort((a, b) => (a.over1kOrder || 0) - (b.over1kOrder || 0));
+
+    const baseOrderSub1k = sub1kReps.map(rep => rep.id);
+    const baseOrderOver1k = over1kReps.map(rep => rep.id);
+
+    const nextSub1k = calculateNextInRotation(baseOrderSub1k, currentMonthData.entries, currentMonthData.leads, false, replacementState);
+    const next1kPlus = calculateNextInRotation(baseOrderOver1k, currentMonthData.entries, currentMonthData.leads, true, replacementState);
+
+    const skipCounts: { [repId: string]: number } = {};
+    currentMonthData.entries.forEach(entry => {
+      if (entry.type === 'skip') {
+        skipCounts[entry.repId] = (skipCounts[entry.repId] || 0) + 1;
+      }
+    });
+
+    setRotationState(prev => ({
+      ...prev,
+      normalRotationSub1k: baseOrderSub1k,
+      normalRotationOver1k: baseOrderOver1k,
+      actualRotationSub1k: [...baseOrderSub1k],
+      actualRotationOver1k: [...baseOrderOver1k],
+      nextSub1k,
+      next1kPlus,
+      skips: skipCounts
+    }));
+   }, [salesReps, monthKey, monthlyData, replacementState]);
+
+  // 4) Render guards AFTER all hooks
+ 
 
   // Initialize and update rotation state based on sales reps and current data
   useEffect(() => {
@@ -281,7 +321,33 @@ export default function App() {
       next1kPlus: next1kPlus,
       skips: skipCounts
     }));
-  }, [salesReps, currentMonthData, replacementState]);
+  }, [salesReps, monthKey, monthlyData, replacementState]);
+
+   if (repsLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading sales reps...</p>
+        </div>
+      </div>
+    );
+  }
+  if (repsError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center text-red-600">
+          <p className="mb-4">Error loading sales reps: {repsError}</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const getEligibleReps = (leadData: any): SalesRep[] => {
     const isOver1k = leadData.unitCount >= 1000;
@@ -725,8 +791,8 @@ export default function App() {
   };
 
   const handleRepUpdate = (updatedReps: SalesRep[]) => {
-    setSalesReps(updatedReps);
-  };
+  updateSalesReps(updatedReps);
+};
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -850,6 +916,9 @@ export default function App() {
           onClose={() => setShowParameters(false)}
         />
       )}
+
+      <ConnectionTest />
+      
     </div>
   );
 }
