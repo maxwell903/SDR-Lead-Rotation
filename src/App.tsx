@@ -918,8 +918,6 @@ export default function App() {
           onClose={() => setShowParameters(false)}
         />
       )}
-
-      <ConnectionTest />
       
     </div>
     </AuthWrapper>
