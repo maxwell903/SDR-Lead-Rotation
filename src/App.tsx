@@ -18,6 +18,7 @@ import {
 import ConnectionTest from './components/ConnectionTest';
 import { useSalesReps } from './hooks/useSupabaseData';
 import AuthWrapper from './components/AuthWrapper';
+import { useLeads } from './hooks/useLeads';
 
 // Utility functions
 const getDaysInMonth = (date: Date): number => {
@@ -214,6 +215,7 @@ const initialReps: SalesRep[] = [
 export default function App() {
   // 1) All hooks at the top – never behind conditionals or early returns
   const { salesReps, loading: repsLoading, error: repsError, updateSalesReps } = useSalesReps();
+  const { leads: dbLeads, loading: leadsLoading, addLead, updateLead, removeLead } = useLeads();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [monthlyData, setMonthlyData] = useState<{ [key: string]: MonthData }>({});
   const [rotationState, setRotationState] = useState<RotationState>({
@@ -238,17 +240,31 @@ export default function App() {
   const daysInMonth = getDaysInMonth(currentDate);
   const monthName = formatMonth(currentDate);
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
-    const currentMonthData = useMemo(() => {
+  const currentMonthData = useMemo(() => {
     const existing = monthlyData[monthKey];
-    if (existing) return existing;
-    // Stable fallback until the month gets data
+    
+    // Get leads from DB for current month
+    const currentMonthLeads = dbLeads.filter(lead => 
+      lead.month === currentDate.getMonth() + 1 && // DB stores 1-12, Date uses 0-11
+      lead.year === currentDate.getFullYear()
+    );
+    
+    if (existing) {
+      return {
+        ...existing,
+        leads: currentMonthLeads.length > 0 ? currentMonthLeads : existing.leads // Use DB leads if available
+      };
+    }
+    
+    // Stable fallback
     return {
       month: currentDate.getMonth(),
       year: currentDate.getFullYear(),
-      leads: [],
+      leads: currentMonthLeads, // Use DB leads
       entries: [],
     };
-  }, [monthlyData, monthKey, currentDate]);
+  }, [monthlyData, monthKey, currentDate, dbLeads]);
+
   // 3) Effects (still above render guards)
   useEffect(() => {
     const sub1kReps = salesReps
@@ -411,18 +427,18 @@ export default function App() {
     setCurrentDate(direction === 'next' ? addMonths(currentDate, 1) : addMonths(currentDate, -1));
   };
 
-  const handleAddLead = (leadData: any) => {
+    const handleAddLead = async (leadData: any) => {
     const month = currentDate.getMonth();
     const year = currentDate.getFullYear();
     const monthKey = `${year}-${month}`;
 
     // Handle updates to existing entries
     if (leadData.isEditing && leadData.editingEntryId) {
-      handleUpdateEntry(leadData.editingEntryId, leadData);
+      await handleUpdateEntry(leadData.editingEntryId, leadData);
       return;
     }
 
-    // Handle non-lead entries (skip, ooo, next)
+    // Handle non-lead entries (skip, ooo, next) - keep in local state only
     if (leadData.type && leadData.type !== 'lead') {
       const newEntry: LeadEntry = {
         id: Date.now().toString(),
@@ -457,18 +473,16 @@ export default function App() {
       return;
     }
 
-    // Handle lead assignment - check for replacement first
+    // Handle lead assignment
     let assignedRepId = leadData.assignedTo;
     
     if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-      // This is a replacement lead - get the locked assignment
       const assignment = getReplacementAssignment(leadData.originalLeadIdToReplace);
       if (assignment) {
         assignedRepId = assignment.repId;
       }
     }
     
-    // Fallback to normal assignment logic if no replacement or assignment failed
     if (!assignedRepId) {
       assignedRepId = getNextInRotation(leadData);
     }
@@ -478,57 +492,64 @@ export default function App() {
       return;
     }
 
-    const newLead: Lead = {
-      id: Date.now().toString(),
-      accountNumber: leadData.accountNumber,
-      url: leadData.url,
-      propertyTypes: leadData.propertyTypes,
-      unitCount: leadData.unitCount,
-      assignedTo: assignedRepId,
-      date: new Date(),
-      comments: leadData.comments || [],
-      month,
-      year
-    };
+    try {
+      // Save lead to database
+      const newLead = await addLead({
+        accountNumber: leadData.accountNumber,
+        url: leadData.url,
+        propertyTypes: leadData.propertyTypes,
+        unitCount: leadData.unitCount,
+        assignedTo: assignedRepId,
+        date: new Date(),
+        comments: leadData.comments || [],
+        month: month + 1, // DB stores 1-12
+        year
+      });
 
-    const newEntry: LeadEntry = {
-      id: Date.now().toString(),
-      day: selectedCell?.day || new Date().getDate(),
-      repId: assignedRepId,
-      type: 'lead',
-      value: newLead.accountNumber,
-      url: newLead.url,
-      comments: newLead.comments,
-      leadId: newLead.id,
-      month,
-      year,
-      unitCount: newLead.unitCount,
-      rotationTarget: newLead.unitCount >= 1000 ? 'over1k' : 'sub1k'
-    };
+      // Create local entry for the calendar
+      const newEntry: LeadEntry = {
+        id: Date.now().toString(),
+        day: selectedCell?.day || new Date().getDate(),
+        repId: assignedRepId,
+        type: 'lead',
+        value: newLead.accountNumber,
+        url: newLead.url,
+        comments: newLead.comments,
+        leadId: newLead.id,
+        month,
+        year,
+        unitCount: newLead.unitCount,
+        rotationTarget: newLead.unitCount >= 1000 ? 'over1k' : 'sub1k'
+      };
 
-    const updatedData = {
-      ...currentMonthData,
-      leads: [...currentMonthData.leads, newLead],
-      entries: [...currentMonthData.entries, newEntry]
-    };
+      // Update local entries (leads come from DB via hook)
+      const updatedData = {
+        ...currentMonthData,
+        entries: [...currentMonthData.entries, newEntry]
+      };
 
-    setMonthlyData(prev => ({
-      ...prev,
-      [monthKey]: updatedData
-    }));
+      setMonthlyData(prev => ({
+        ...prev,
+        [monthKey]: updatedData
+      }));
 
-    // If this is a replacement lead, close the mark now
-    if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-      setReplacementState(prev =>
-        applyReplacement(prev, leadData.originalLeadIdToReplace, newLead)
-      );
+      // Handle replacement logic
+      if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
+        setReplacementState(prev =>
+          applyReplacement(prev, leadData.originalLeadIdToReplace, newLead)
+        );
+      }
+
+      setShowLeadModal(false);
+      setSelectedCell(null);
+      
+      // Update rotation state
+      updateRotationAfterAssignment(assignedRepId, newLead.unitCount >= 1000);
+      
+    } catch (error) {
+      console.error('Failed to save lead:', error);
+      alert('Failed to save lead. Please try again.');
     }
-
-    setShowLeadModal(false);
-    setSelectedCell(null);
-    
-    // Update rotation state
-    updateRotationAfterAssignment(assignedRepId, newLead.unitCount >= 1000);
   };
 
   const handleCellClick = (day: number, repId: string) => {
@@ -536,11 +557,11 @@ export default function App() {
     setShowLeadModal(true);
   };
 
-  const handleDeleteEntry = (entryId: string) => {
+  const handleDeleteEntry = async (entryId: string) => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     const entry = currentMonthData.entries.find(e => e.id === entryId);
     
-    // Guard: Check if lead can be deleted using replacement rules
+    // Guard: Check if lead can be deleted
     if (entry?.type === 'lead' && entry.leadId) {
       const guard = canDeleteLead(replacementState, entry.leadId);
       if (!guard.allowed) {
@@ -550,17 +571,25 @@ export default function App() {
     }
 
     if (entry) {
+      // Remove from local entries
       const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
-      let updatedLeads = currentMonthData.leads;
       
+      // If it's a lead, delete from database
       if (entry.leadId) {
-        updatedLeads = currentMonthData.leads.filter(l => l.id !== entry.leadId);
+        try {
+          await removeLead(entry.leadId);
+        } catch (error) {
+          console.error('Failed to delete lead from database:', error);
+          alert('Failed to delete lead. Please try again.');
+          return;
+        }
       }
       
       const updatedData = {
         ...currentMonthData,
         entries: updatedEntries,
-        leads: updatedLeads
+        // leads come from DB via hook, so don't manage them locally
+        leads: currentMonthData.leads
       };
       
       setMonthlyData(prev => ({
@@ -570,19 +599,17 @@ export default function App() {
 
       // Handle replacement bookkeeping
       if (entry.type === 'lead' && entry.leadId) {
-        // If we deleted a replacement lead, reopen the original mark
         setReplacementState(prev =>
           undoReplacementByDeletingReplacementLead(prev, entry.leadId!)
         );
 
-        // If we deleted an original lead that was marked OPEN (no replacement yet), remove the mark entirely
         const rec = replacementState.byLeadId[entry.leadId!];
         if (rec && !rec.replacedByLeadId) {
           setReplacementState(prev => removeLeadMark(prev, entry.leadId!));
         }
       }
 
-      // Recalculate skip counts from scratch based on remaining entries
+      // Recalculate skip counts
       const newSkipCounts: { [repId: string]: number } = {};
       updatedEntries.forEach(e => {
         if (e.type === 'skip') {
@@ -590,7 +617,6 @@ export default function App() {
         }
       });
 
-      // Update rotation state with recalculated skip counts
       setRotationState(prev => ({
         ...prev,
         skips: newSkipCounts
@@ -656,28 +682,25 @@ export default function App() {
     setReplacementState(prev => removeLeadMark(prev, leadId));
   };
 
-  const handleUpdateEntry = (entryId: string, updatedData: any) => {
+   const handleUpdateEntry = async (entryId: string, updatedData: any) => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     
     setMonthlyData(prev => {
       const currentData = prev[monthKey] || currentMonthData;
       const existingEntry = currentData.entries.find(e => e.id === entryId);
       
-      if (!existingEntry) {
-        console.error('Entry not found for update:', entryId);
-        return prev;
-      }
+      if (!existingEntry) return prev;
 
-      // Handle non-lead entry updates
+      // Handle non-lead entries locally
       if (updatedData.type !== 'lead') {
         const updatedEntries = currentData.entries.map(entry => {
           if (entry.id === entryId) {
             return {
               ...entry,
-              repId: updatedData.assignedTo || entry.repId,
+              type: updatedData.type,
               value: updatedData.type.toUpperCase(),
-              rotationTarget: (updatedData.rotationTarget as 'sub1k' | 'over1k' | 'both' | undefined) || entry.rotationTarget,
-              comments: updatedData.comments || entry.comments
+              repId: updatedData.assignedTo || entry.repId,
+              rotationTarget: updatedData.rotationTarget || entry.rotationTarget
             };
           }
           return entry;
@@ -692,93 +715,50 @@ export default function App() {
         };
       }
 
-      // Handle lead entry updates
-      const oldAssignedRepId = existingEntry.repId;
-      let newAssignedRepId = updatedData.assignedTo;
-
-      // Check if this is a replacement lead update
-      if (updatedData.replaceToggle && updatedData.originalLeadIdToReplace) {
-        const assignment = getReplacementAssignment(updatedData.originalLeadIdToReplace);
-        if (assignment) {
-          newAssignedRepId = assignment.repId;
-        }
-      }
-
-      const assignmentChanged = oldAssignedRepId !== newAssignedRepId;
-
-      // Create updated lead
-      const updatedLead: Lead = existingEntry.leadId ? {
-        id: existingEntry.leadId,
-        accountNumber: updatedData.accountNumber,
-        url: updatedData.url,
-        propertyTypes: updatedData.propertyTypes,
-        unitCount: updatedData.unitCount,
-        assignedTo: newAssignedRepId,
-        date: new Date(),
-        comments: updatedData.comments || [],
-        month: currentData.month,
-        year: currentData.year
-      } : {
-        // Create new lead if one doesn't exist (safety check)
-        id: Date.now().toString(),
-        accountNumber: updatedData.accountNumber,
-        url: updatedData.url,
-        propertyTypes: updatedData.propertyTypes,
-        unitCount: updatedData.unitCount,
-        assignedTo: newAssignedRepId,
-        date: new Date(),
-        comments: updatedData.comments || [],
-        month: currentData.month,
-        year: currentData.year
-      };
-
-      // Update the entry
-      const updatedEntries = currentData.entries.map(entry => {
-        if (entry.id === entryId) {
-          return {
-            ...entry,
-            repId: newAssignedRepId,
-            value: updatedLead.accountNumber,
-            url: updatedLead.url,
-            comments: updatedLead.comments,
-            unitCount: updatedLead.unitCount,
-            rotationTarget: (updatedLead.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k',
-            leadId: updatedLead.id
-          };
-        }
-        return entry;
-      });
-
-      // Update or add the lead
-      let updatedLeads;
+      // Handle lead updates - save to database
       if (existingEntry.leadId) {
-        // Update existing lead
-        updatedLeads = currentData.leads.map(lead => 
-          lead.id === existingEntry.leadId ? updatedLead : lead
-        );
-      } else {
-        // Add new lead (safety check)
-        updatedLeads = [...currentData.leads, updatedLead];
+        // Update the lead in the database
+        updateLead(existingEntry.leadId, {
+          accountNumber: updatedData.accountNumber,
+          url: updatedData.url,
+          propertyTypes: updatedData.propertyTypes,
+          unitCount: updatedData.unitCount,
+          assignedTo: updatedData.assignedTo,
+          comments: updatedData.comments || []
+        }).catch(error => {
+          console.error('Failed to update lead:', error);
+          alert('Failed to update lead. Please try again.');
+        });
+
+        // Update local entry
+        const updatedEntries = currentData.entries.map(entry => {
+          if (entry.id === entryId) {
+            return {
+              ...entry,
+              repId: updatedData.assignedTo,
+              value: updatedData.accountNumber,
+              url: updatedData.url,
+              comments: updatedData.comments || [],
+              unitCount: updatedData.unitCount,
+              rotationTarget: (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k'
+            };
+          }
+          return entry;
+        });
+
+        return {
+          ...prev,
+          [monthKey]: {
+            ...currentData,
+            entries: updatedEntries
+            // leads come from DB via hook
+          }
+        };
       }
 
-      // If assignment changed, trigger rotation recalculation
-      if (assignmentChanged) {
-        setTimeout(() => {
-          updateRotationAfterAssignment(newAssignedRepId, updatedLead.unitCount >= 1000);
-        }, 0);
-      }
-
-      return {
-        ...prev,
-        [monthKey]: {
-          ...currentData,
-          entries: updatedEntries,
-          leads: updatedLeads
-        }
-      };
+      return prev;
     });
 
-    // Close modal and reset state
     setShowLeadModal(false);
     setSelectedCell(null);
     setEditingEntry(null);

@@ -12,17 +12,19 @@ export interface SalesRep {
   status: 'active' | 'ooo';
 }
 
+// Add this to your existing types.ts file
+
 export interface Lead {
-  id: string;
-  accountNumber: string;
-  url: string;
-  propertyTypes: string[];
-  unitCount: number;
-  assignedTo: string;
-  date: Date;
-  comments: string[];
-  month: number;
-  year: number;
+  id: string
+  accountNumber: string
+  url: string
+  propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[]
+  unitCount: number
+  assignedTo: string  // rep id
+  date: Date
+  comments: string[]
+  month: number
+  year: number
 }
 
 export interface RotationState {
@@ -103,3 +105,4 @@ export interface TimeFilterOption {
   label: string;
   icon: React.ReactNode;
 }
+
