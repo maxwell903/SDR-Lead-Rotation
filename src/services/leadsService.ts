@@ -95,9 +95,12 @@ export async function updateLead(id: string, patch: Partial<Lead>): Promise<Lead
     .eq('id', id)
     .single()
   
+    // Never allow id to be updated in the payload
+  const payload = { ...leadToRow(patch as Lead) } as any;
+  delete payload.id;
   const { data, error } = await supabase
     .from('leads')
-    .update(leadToRow(patch as Lead))
+    .update(payload)
     .eq('id', id)
     .select()
     .single()

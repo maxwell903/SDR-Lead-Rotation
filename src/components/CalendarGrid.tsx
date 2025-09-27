@@ -18,6 +18,7 @@ interface CalendarGridProps {
   onCellClick: (day: number, repId: string) => void;
   onDeleteEntry: (entryId: string) => void;
   onEditEntry: (entry: LeadEntry) => void;
+  onEditLead: (lead: Lead) => void;
   leads: Lead[];
   //lead-replacement props
   replacementState: ReplacementState;
@@ -34,6 +35,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   onCellClick,
   onDeleteEntry,
   onEditEntry,
+  onEditLead,
   leads,
   // NEW
   replacementState,
@@ -736,10 +738,26 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                                   }
                                   return null;
                                 })()}
+                                
                                 <button
-                                  onClick={(e) => handleEntryAction(e, 'edit', entry)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (entry.type === 'lead') {
+                                      const lead = getLeadForEntry(entry);
+                                          if (lead) {
+                                            if (onEditLead) {
+                                              onEditLead(lead);
+                                            } else {
+                                            // fallback to original entry editor if parent didn't pass onEditLead yet
+                                              handleEntryAction(e, 'edit', entry);
+                                            }
+                                          }
+                                    } else {
+                                      handleEntryAction(e, 'edit', entry);
+                                    }
+                                  }}
                                   className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
-                                  title="Edit entry"
+                                  title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
                                 >
                                   <Edit className="w-3 h-3" />
                                 </button>
@@ -822,14 +840,22 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     return null;
   })()}
   {/* ... existing edit and delete buttons */}
-                                <button
-                                  onClick={(e) => handleEntryAction(e, 'edit', entry)}
-                                  className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
-                                  title="Edit entry"
-                                >
+                               <button
+                                 onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (entry.type === 'lead') {
+                                      const lead = getLeadForEntry(entry);
+                                      if (lead) onEditLead(lead);
+                                    } else {
+                                      handleEntryAction(e, 'edit', entry);
+                                    }
+                                  }}
+                                 className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
+                                  title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
+                               >
                                   <Edit className="w-3 h-3" />
-                                </button>
-                                <button
+                               </button>
+                               <button
                                   onClick={(e) => handleEntryAction(e, 'delete', entry)}
                                   className="p-1 text-gray-400 hover:text-red-600 transition-colors rounded"
                                   title="Delete entry"

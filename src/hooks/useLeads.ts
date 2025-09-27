@@ -21,7 +21,7 @@ type State = {
 
 /**
  * React hook that exposes CRUD + realtime for leads.
- * Enhanced with replacement cascade deletion handling
+ * Enhanced with replacement cascade deletion handling and modal support
  */
 export function useLeads() {
   const [state, setState] = useState<State>({ leads: [], loading: true, error: null })
@@ -94,16 +94,27 @@ export function useLeads() {
     }
   }
 
-  /** Update a single lead by id */
+  /** Update a single lead by id - Enhanced for modal support */
   const updateLead = async (id: string, patch: Partial<Lead>) => {
     try {
+      // Optimistic update for immediate UI feedback
+      setState(s => ({
+        ...s,
+        leads: s.leads.map(l => (l.id === id ? { ...l, ...patch } : l))
+      }))
+
       const updated = await updateOne(id, patch)
+      
+      // Update with server response
       setState(s => ({
         ...s,
         leads: s.leads.map(l => (l.id === id ? updated : l))
       }))
+      
       return updated
     } catch (e: any) {
+      // Rollback optimistic update on error
+      await refresh()
       setState(s => ({ ...s, error: e?.message ?? 'Failed to update lead' }))
       throw e
     }
@@ -112,12 +123,26 @@ export function useLeads() {
   /** Enhanced delete with replacement cascade handling */
   const removeLead = async (id: string) => {
     try {
-      await deleteLeadWithReplacementHandling(id)
+      // Check deletion status first
+      const deletionStatus = await checkLeadDeletionStatus(id)
+      
+      if (!deletionStatus.canDelete) {
+        throw new Error(deletionStatus.warningMessage || 'Lead cannot be deleted')
+      }
+
+      // Optimistic update
       setState(s => ({
         ...s,
         leads: s.leads.filter(l => l.id !== id)
       }))
+
+      await deleteLeadWithReplacementHandling(id)
+      
+      // Refresh to ensure consistency
+      await refresh()
     } catch (e: any) {
+      // Rollback optimistic update on error
+      await refresh()
       setState(s => ({ ...s, error: e?.message ?? 'Failed to delete lead with replacement handling' }))
       throw e
     }
@@ -126,12 +151,33 @@ export function useLeads() {
   /** Enhanced bulk delete with replacement cascade handling */
   const removeLeads = async (ids: string[]) => {
     try {
-      await deleteLeadsWithReplacementHandling(ids)
+      // Check each lead's deletion status
+      const deletionChecks = await Promise.all(
+        ids.map(async (id) => {
+          const status = await checkLeadDeletionStatus(id)
+          return { id, ...status }
+        })
+      )
+
+      const cannotDelete = deletionChecks.filter(check => !check.canDelete)
+      if (cannotDelete.length > 0) {
+        const errorMsg = `Cannot delete leads: ${cannotDelete.map(c => c.id).join(', ')}`
+        throw new Error(errorMsg)
+      }
+
+      // Optimistic update
       setState(s => ({
         ...s,
         leads: s.leads.filter(l => !ids.includes(l.id))
       }))
+
+      await deleteLeadsWithReplacementHandling(ids)
+      
+      // Refresh to ensure consistency
+      await refresh()
     } catch (e: any) {
+      // Rollback optimistic update on error
+      await refresh()
       setState(s => ({ ...s, error: e?.message ?? 'Failed to delete leads with replacement handling' }))
       throw e
     }
@@ -140,12 +186,14 @@ export function useLeads() {
   /** Legacy delete functions (for backwards compatibility) */
   const removeLeadSimple = async (id: string) => {
     try {
-      await deleteLead(id)
       setState(s => ({
         ...s,
         leads: s.leads.filter(l => l.id !== id)
       }))
+      
+      await deleteLead(id)
     } catch (e: any) {
+      await refresh() // rollback
       setState(s => ({ ...s, error: e?.message ?? 'Failed to delete lead' }))
       throw e
     }
@@ -153,12 +201,14 @@ export function useLeads() {
 
   const removeLeadsSimple = async (ids: string[]) => {
     try {
-      await deleteLeads(ids)
       setState(s => ({
         ...s,
         leads: s.leads.filter(l => !ids.includes(l.id))
       }))
+      
+      await deleteLeads(ids)
     } catch (e: any) {
+      await refresh() // rollback
       setState(s => ({ ...s, error: e?.message ?? 'Failed to delete leads' }))
       throw e
     }
@@ -179,18 +229,87 @@ export function useLeads() {
     }
   }
 
+  /**
+   * Find a lead by ID across all loaded leads
+   * Useful for modal operations
+   */
+  const findLead = (id: string): Lead | undefined => {
+    return state.leads.find(lead => lead.id === id)
+  }
+
+  /**
+   * Get leads by assigned rep ID
+   * Useful for filtering and display
+   */
+  const getLeadsByRep = (repId: string): Lead[] => {
+    return state.leads.filter(lead => lead.assignedTo === repId)
+  }
+
+  /**
+   * Get leads by date range
+   * Useful for calendar operations
+   */
+  const getLeadsByDateRange = (startDate: Date, endDate: Date): Lead[] => {
+    return state.leads.filter(lead => {
+      if (!lead.date) return false
+      const leadDate = new Date(lead.date)
+      return leadDate >= startDate && leadDate <= endDate
+    })
+  }
+
+  /**
+   * Check if a lead exists by account number
+   * Useful for duplicate prevention
+   */
+  const existsByAccountNumber = (accountNumber: string, excludeId?: string): boolean => {
+    return state.leads.some(lead => 
+      lead.accountNumber === accountNumber && 
+      (excludeId ? lead.id !== excludeId : true)
+    )
+  }
+
+  /**
+   * Get leads by property type
+   * Useful for filtering operations
+   */
+  const getLeadsByPropertyType = (propertyType: string): Lead[] => {
+    return state.leads.filter(lead => 
+      lead.propertyTypes?.includes(propertyType as any)
+    )
+  }
+
+  /**
+   * Get leads by unit count range
+   * Useful for rotation logic
+   */
+  const getLeadsByUnitRange = (minUnits?: number, maxUnits?: number): Lead[] => {
+    return state.leads.filter(lead => {
+      if (minUnits !== undefined && lead.unitCount < minUnits) return false
+      if (maxUnits !== undefined && lead.unitCount > maxUnits) return false
+      return true
+    })
+  }
+
   return {
     // State
     ...state,
     
-    // Actions
+    // Core CRUD operations
     refresh,
     updateLeads,           // Bulk update (like sales reps)
     addLead,              // Single create
-    updateLead,           // Single update
+    updateLead,           // Single update (enhanced for modals)
     removeLead,           // Enhanced delete with replacement cascade
     removeLeads,          // Enhanced bulk delete with replacement cascade
     checkDeletionStatus,  // Check deletion status and warnings
+    
+    // Utility functions for modal and UI operations
+    findLead,             // Find lead by ID
+    getLeadsByRep,        // Get leads by rep ID
+    getLeadsByDateRange,  // Get leads by date range
+    existsByAccountNumber, // Check for duplicates
+    getLeadsByPropertyType, // Get leads by property type
+    getLeadsByUnitRange,  // Get leads by unit count range
     
     // Legacy functions (for backwards compatibility)
     removeLeadSimple,     // Simple delete without replacement handling

@@ -21,6 +21,7 @@ import ConnectionTest from './components/ConnectionTest';
 import { useSalesReps } from './hooks/useSupabaseData';
 import AuthWrapper from './components/AuthWrapper';
 import { useLeads } from './hooks/useLeads';
+import EditLeadModal from './components/EditLeadModal';
 
 
 const generateUniqueId = (prefix: string = 'entry'): string => {
@@ -340,6 +341,8 @@ export default function App() {
   } = useReplacementState();
 
   const [showLeadModal, setShowLeadModal] = useState(false);
+  const [showEditLeadModal, setShowEditLeadModal] = useState(false);
+const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [showRepManager, setShowRepManager] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
   const [selectedCell, setSelectedCell] = useState<{ day: number; repId: string } | null>(null);
@@ -364,19 +367,20 @@ export default function App() {
     
     // Always reconstruct entries from DB leads
     const entriesFromDbLeads: LeadEntry[] = currentMonthLeads.map(lead => ({
-      id: `entry_${lead.id}`,
-      day: new Date(lead.date).getDate(),
-      repId: lead.assignedTo,
-      type: 'lead' as const,
-      value: lead.accountNumber,
-      url: lead.url,
-      comments: lead.comments,
-      leadId: lead.id,
-      month: currentDate.getMonth(),
-      year: currentDate.getFullYear(),
-      unitCount: lead.unitCount,
-      rotationTarget: lead.unitCount >= 1000 ? 'over1k' : 'sub1k'
-    }));
+  id: `entry_${lead.id}`,
+  day: new Date(lead.date).getDate(),
+  repId: lead.assignedTo,
+  type: 'lead' as const,
+  value: lead.accountNumber,
+  url: lead.url,
+  comments: lead.comments,
+  leadId: lead.id,
+  month: currentDate.getMonth(),
+  year: currentDate.getFullYear(),
+  unitCount: lead.unitCount,
+  rotationTarget: lead.unitCount >= 1000 ? 'over1k' : 'sub1k',
+  propertyTypes: lead.propertyTypes || [],
+}));
     
     // Get non-lead entries from local state (skip, ooo, next)
     const nonLeadEntries = existing?.entries.filter(entry => entry.type !== 'lead') || [];
@@ -405,8 +409,10 @@ export default function App() {
 
     const nextSub1k = calculateNextInRotation(baseOrderSub1k, currentMonthData.entries, currentMonthData.leads, false, replacementState);
     const next1kPlus = calculateNextInRotation(baseOrderOver1k, currentMonthData.entries, currentMonthData.leads, true, replacementState);
-
+    
     const skipCounts: { [repId: string]: number } = {};
+
+    
     currentMonthData.entries.forEach(entry => {
       if (entry.type === 'skip') {
         skipCounts[entry.repId] = (skipCounts[entry.repId] || 0) + 1;
@@ -453,21 +459,28 @@ export default function App() {
     );
   }
 
-  const getEligibleReps = (leadData: any): SalesRep[] => {
-    const isOver1k = leadData.unitCount >= 1000;
-    
-    return salesReps.filter(rep => {
-      if (rep.status !== 'active') return false;
-      if (isOver1k && !rep.parameters.canHandle1kPlus) return false;
-      if (rep.parameters.maxUnits && leadData.unitCount > rep.parameters.maxUnits) return false;
-      
-      const hasMatchingPropertyType = leadData.propertyTypes.some((type: string) => 
-        rep.parameters.propertyTypes.includes(type as any)
+  // App.tsx
+const getEligibleReps = (leadData: any): SalesRep[] => {
+  const isOver1k = (leadData?.unitCount ?? 0) >= 1000;
+
+  return salesReps.filter(rep => {
+    if (rep.status !== 'active') return false;
+    if (isOver1k && !rep.parameters.canHandle1kPlus) return false;
+    if (rep.parameters.maxUnits && leadData.unitCount > rep.parameters.maxUnits) return false;
+
+    // Property types are OPTIONAL — only enforce if some are selected.
+    if (Array.isArray(leadData.propertyTypes) && leadData.propertyTypes.length > 0) {
+      // Rep must support ALL selected types (README spec)
+      const supportsAll = leadData.propertyTypes.every((t: string) =>
+        rep.parameters.propertyTypes.includes(t as any)
       );
-      
-      return hasMatchingPropertyType;
-    });
-  };
+      if (!supportsAll) return false;
+    }
+
+    return true;
+  });
+};
+
 
   const getReplacementAssignment = (originalLeadId: string) => {
     const rec = replacementState.byLeadId[originalLeadId];
@@ -618,7 +631,8 @@ export default function App() {
       month,
       year,
       unitCount: undefined,
-      rotationTarget: leadData.rotationTarget || 'both'
+      rotationTarget: leadData.rotationTarget || 'both',
+      propertyTypes: leadData.propertyTypes || [],
     };
     
     // Use safe state update to prevent duplicates
@@ -706,20 +720,7 @@ export default function App() {
     console.log('Lead saved successfully:', newLead.id);
 
     // Create local entry for the calendar with guaranteed unique ID
-    const newEntry: LeadEntry = {
-      id: generateUniqueId(`lead_${newLead.id}`),
-      day: selectedCell?.day || new Date().getDate(),
-      repId: assignedRepId,
-      type: 'lead',
-      value: newLead.accountNumber,
-      url: newLead.url,
-      comments: newLead.comments,
-      leadId: newLead.id,
-      month,
-      year,
-      unitCount: newLead.unitCount,
-      rotationTarget: newLead.unitCount >= 1000 ? 'over1k' : 'sub1k'
-    };
+   
 
     // Handle replacement logic
     if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
@@ -735,15 +736,7 @@ export default function App() {
     }
 
     // ENHANCED: Safely update local state with duplicate prevention
-    updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
-      // Double-check for duplicates before adding (defensive programming)
-      const duplicate = checkForDuplicateEntry(entries, newEntry);
-      if (duplicate) {
-        console.warn('Duplicate detected during local state update, skipping:', duplicate);
-        return entries; // Don't add if duplicate found
-      }
-      return safeAddEntryToState(entries, newEntry);
-    });
+    
 
     setShowLeadModal(false);
     setSelectedCell(null);
@@ -862,6 +855,35 @@ export default function App() {
     setSelectedCell({ day: entry.day, repId: entry.repId });
     setShowLeadModal(true);
   };
+
+  const handleEditLead = (lead: Lead) => {
+  setEditingLead(lead);
+  setShowEditLeadModal(true);
+};
+
+const handleUpdateLead = async (updatedData: any) => {
+  if (!editingLead) return;
+  
+  try {
+    await updateLead(editingLead.id, updatedData);
+    setShowEditLeadModal(false);
+    setEditingLead(null);
+  } catch (error) {
+    console.error('Error updating lead:', error);
+    throw error;
+  }
+};
+
+const handleDeleteLead = async (leadId: string) => {
+  try {
+    await removeLead(leadId);
+    setShowEditLeadModal(false);
+    setEditingLead(null);
+  } catch (error) {
+    console.error('Error deleting lead:', error);
+    throw error;
+  }
+};
 
   // UPDATED: Enhanced handleMarkForReplacement with immediate UI refresh
   const handleMarkForReplacement = async (leadId: string) => {
@@ -992,6 +1014,7 @@ export default function App() {
               replacementState={replacementState}
               onMarkForReplacement={handleMarkForReplacement}
               onRemoveReplacementMark={handleRemoveReplacementMark}
+              onEditLead={handleEditLead}
             />
           </div>
           
@@ -1029,9 +1052,29 @@ export default function App() {
           leads={currentMonthData.leads}
           replacementState={replacementState}
           monthlyData={monthlyData}
+          onDelete={handleDeleteEntry}
           
         />
+        
       )}
+      {showEditLeadModal && editingLead && (
+  <EditLeadModal
+    onClose={() => {
+      setShowEditLeadModal(false);
+      setEditingLead(null);
+    }}
+    onUpdate={handleUpdateLead}
+    onDelete={handleDeleteLead}
+    salesReps={salesReps}
+    editingLead={editingLead}
+    rotationState={rotationState}
+    getEligibleReps={getEligibleReps}
+    replacementState={replacementState}
+    monthlyData={monthlyData}
+    onMarkForReplacement={handleMarkForReplacement}
+    onUnmarkForReplacement={handleRemoveReplacementMark}
+  />
+)}
 
       {showRepManager && (
         <SalesRepManager

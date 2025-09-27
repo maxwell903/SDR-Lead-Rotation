@@ -50,9 +50,9 @@ export interface LeadEntry {
   leadId?: string;
   month: number;
   year: number;
-  // UPDATED: Properly typed unitCount for lead entries to support calendar display logic
   unitCount?: number;
-  rotationTarget?: 'sub1k' | 'over1k' | 'both'; // ENHANCED: Which rotation this entry should count for
+  rotationTarget?: 'sub1k' | 'over1k' | 'both';
+  propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[]; // This line must be here
 }
 
 export interface MonthData {
