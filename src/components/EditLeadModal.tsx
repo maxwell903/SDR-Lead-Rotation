@@ -656,7 +656,14 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
       className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
       disabled={isSubmitting}
     >
-      {isSubmitting ? 'Updating...' : 'Update'}
+      {isSubmitting ? (
+        <div className="flex items-center justify-center space-x-2">
+          <div className="animate-spin rounded-full h-5 w-5 border-2 border-gray-200 border-t-transparent"></div>
+          <span>Updating...</span>
+        </div>
+      ) : (
+        'Update'
+      )}
     </button>
   </div>
 </form>
