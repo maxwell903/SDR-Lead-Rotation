@@ -73,11 +73,21 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
   onUnreplaceAndCreateNew,
   getEligibleReps
 }) => {
-  const [formData, setFormData] = useState({
+  type EditLeadForm = {
+    accountNumber: string;
+    url: string | null;
+    propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[];
+    unitCount: number | null;
+    comments: string[];
+    assignedTo: string;
+    date: Date;
+  };
+
+  const [formData, setFormData] = useState<EditLeadForm>({
     accountNumber: '',
-    url: '',
+    url: null,
     propertyTypes: [] as ('MFH' | 'MF' | 'SFH' | 'Commercial')[],
-    unitCount: 0,
+    unitCount: null,
     comments: [] as string[],
     assignedTo: '',
     date: new Date()
@@ -141,6 +151,31 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
     const rep = salesReps.find(r => r.id === repId);
     return rep ? rep.name : 'Unknown Rep';
   };
+  // Best-effort position lookup to mirror LeadModal's numbering.
+  // Scans common rotation arrays if present; returns 1-based index or null.
+  const getRepPositionInRotation = (repId: string): number | null => {
+    const rs: any = rotationState as any;
+    const candidateLists: any[] = [];
+   // Try several likely shapes/names without breaking types
+    if (Array.isArray(rs.fullUpcomingRotation)) candidateLists.push(rs.fullUpcomingRotation);
+    if (Array.isArray(rs.upcomingFullRotation)) candidateLists.push(rs.upcomingFullRotation);
+    if (Array.isArray(rs.trueRotation)) candidateLists.push(rs.trueRotation);
+    if (Array.isArray(rs.order)) candidateLists.push(rs.order);
+    if (rs?.sub1k?.fullUpcoming && Array.isArray(rs.sub1k.fullUpcoming)) candidateLists.push(rs.sub1k.fullUpcoming);
+    if (rs?.k1plus?.fullUpcoming && Array.isArray(rs.k1plus.fullUpcoming)) candidateLists.push(rs.k1plus.fullUpcoming);
+
+    for (const list of candidateLists) {
+      const idx = list.findIndex((item: any) => {
+        if (typeof item === 'string') return item === repId;
+        if (item && typeof item === 'object') {
+          return item.id === repId || item.repId === repId || item.rep_id === repId;
+        }
+        return false;
+      });
+      if (idx !== -1) return idx + 1;
+    }
+    return null;
+  };
 
   // Date formatting helpers
   const formatDateDisplay = (date: Date) => {
@@ -169,15 +204,15 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
   };
 
   // Initialize form with lead data
-  useEffect(() => {
+    useEffect(() => {
     setFormData({
-      accountNumber: editingLead.accountNumber || '',
-      url: editingLead.url || '',
-      propertyTypes: editingLead.propertyTypes || [],
-      unitCount: editingLead.unitCount || 0,
-      comments: editingLead.comments || [],
-      assignedTo: editingLead.assignedTo || '',
-      date: editingLead.date || new Date()
+      accountNumber: editingLead.accountNumber ?? '',
+      url: editingLead.url ?? null,
+      propertyTypes: editingLead.propertyTypes ?? [],
+      unitCount: editingLead.unitCount ?? null,
+      comments: editingLead.comments ?? [],
+      assignedTo: editingLead.assignedTo ?? '',
+      date: editingLead.date ? new Date(editingLead.date) : new Date(),
     });
   }, [editingLead]);
 
@@ -192,8 +227,8 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
       alert('Sales rep assignment is required');
       return;
     }
-    if (formData.unitCount <= 0) {
-      alert('Unit count must be greater than 0');
+        if (formData.unitCount !== null && formData.unitCount < 0) {
+      alert('Unit count cannot be negative');
       return;
     }
 
@@ -329,289 +364,304 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[calc(95vh-160px)] overflow-y-auto">
-            {/* 1. Entry Type - Always LEAD and disabled */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">1. Entry Type</label>
-              <select
-                value="lead"
-                disabled
-                className="w-full p-2.5 border-2 border-gray-300 rounded-xl bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
-              >
-                <option value="lead">LEAD</option>
-              </select>
-            </div>
+<form
+  onSubmit={handleSubmit}
+  className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 max-h-[calc(95vh-180px)] overflow-y-auto"
+>
+  {/* 1) Entry Type (disabled as LEAD) */}
+  <div className="md:col-span-1">
+    <label className="block text-sm font-bold text-gray-700 mb-3">Entry Type</label>
+    <select
+      value="lead"
+      disabled
+      className="w-full p-3 border-2 border-gray-300 rounded-xl bg-gray-100 text-gray-500 cursor-not-allowed"
+    >
+      <option value="lead">Lead</option>
+    </select>
+  </div>
 
-            {/* 2. Replacement Summary for Replacement Leads */}
-            {isReplacementLead && originalLeadRecord && (
-              <div className="border-2 border-emerald-200 rounded-xl p-4 bg-emerald-50">
-                <button
-                  type="button"
-                  onClick={() => setShowReplacementSummary(!showReplacementSummary)}
-                  className="flex items-center space-x-2 text-emerald-700 hover:text-emerald-800 font-medium text-sm"
-                >
-                  <span>2. Lead it replaces:</span>
-                  <a
-                    href={originalLeadRecord.url || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 underline font-semibold"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {originalLeadRecord.accountNumber}
-                  </a>
-                  <span>({getSalesRepName(originalLeadRecord.repId)})</span>
-                  {showReplacementSummary ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                </button>
-                
-                {showReplacementSummary && (
-                  <div className="mt-3 p-3 bg-white rounded-lg border border-emerald-200 text-xs space-y-2">
-                    <p><strong>Date Created:</strong> {formatDate(new Date(originalLeadRecord.markedAt))}</p>
-                    <p><strong>Account Number:</strong> {originalLeadRecord.accountNumber}</p>
-                    <p><strong>Sales Rep:</strong> {getSalesRepName(originalLeadRecord.repId)}</p>
-                    <p><strong>Status:</strong> {originalLeadRecord.replacedByLeadId ? 'Replaced' : 'Needs Replacement'}</p>
-                  </div>
-                )}
-              </div>
-            )}
+  {/* 2) Replacement area (aligned with Entry Type) */}
+  <div className="md:col-span-1">
+    {/* Desktop-only spacer to match the Entry Type label height */}
+    <div className="hidden md:block">
+      <label className="block text-sm font-bold text-gray-700 mb-3 invisible">Entry Type</label>
+    </div>
 
-            {/* 2. Replacement Toggles for different scenarios */}
-            {!isReplacementLead && (
-              <div className="space-y-3">
-                {isMarkedForReplacement ? (
-                  // Toggle to unmark from replacement
-                  <div className="border-2 border-orange-200 rounded-xl p-4 bg-orange-50">
-                    <label className="flex items-center space-x-3 text-sm font-bold text-gray-700">
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4 text-orange-600 bg-gray-100 border-2 border-orange-300 rounded focus:ring-orange-500 focus:ring-2"
-                        checked={unmarkFromReplacement}
-                        onChange={(e) => setUnmarkFromReplacement(e.target.checked)}
-                      />
-                      <span>2. Unmark from replacement queue</span>
-                    </label>
-                  </div>
-                ) : (
-                  // Toggle to mark for replacement
-                  <div className="border-2 border-amber-200 rounded-xl p-4 bg-amber-50">
-                    <label className="flex items-center space-x-3 text-sm font-bold text-gray-700">
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4 text-amber-600 bg-gray-100 border-2 border-amber-300 rounded focus:ring-amber-500 focus:ring-2"
-                        checked={markForReplacement}
-                        onChange={(e) => setMarkForReplacement(e.target.checked)}
-                      />
-                      <span>2. Mark lead as in need of replacement</span>
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
+    {isReplacementLead && originalLeadRecord ? (
+      <div className="border-2 border-emerald-200 rounded-xl p-4 bg-emerald-50">
+        <button
+          type="button"
+          onClick={() => setShowReplacementSummary(!showReplacementSummary)}
+          className="flex items-center space-x-2 text-emerald-700 hover:text-emerald-800 font-medium"
+        >
+          <span>Lead it replaces:</span>
+          <a
+            href={(originalLeadRecord.url ?? '#')}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 underline font-semibold"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {originalLeadRecord.accountNumber}
+          </a>
+          <span>({getSalesRepName(originalLeadRecord.repId)})</span>
+          {showReplacementSummary ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
 
-            {/* 3. Unit Count */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">3. Unit Count *</label>
+        {showReplacementSummary && (
+          <div className="mt-3 p-3 bg-white rounded-lg border border-emerald-200 text-xs space-y-2">
+            <p><strong>Date Created:</strong> {formatDate(new Date(originalLeadRecord.markedAt))}</p>
+            <p><strong>Account Number:</strong> {originalLeadRecord.accountNumber}</p>
+            <p><strong>Sales Rep:</strong> {getSalesRepName(originalLeadRecord.repId)}</p>
+            <p><strong>Status:</strong> {originalLeadRecord.replacedByLeadId ? 'Replaced' : 'Needs Replacement'}</p>
+          </div>
+        )}
+      </div>
+    ) : (
+      <div className="space-y-3">
+        {isMarkedForReplacement ? (
+          <div className="border-2 border-orange-200 rounded-xl p-4 bg-orange-50">
+            <label className="flex items-center space-x-3 text-sm font-bold text-gray-700">
               <input
-                type="number"
-                value={formData.unitCount}
-                onChange={(e) => setFormData(prev => ({ ...prev, unitCount: parseInt(e.target.value) || 0 }))}
-                className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 text-sm"
-                min="1"
-                required
+                type="checkbox"
+                className="w-4 h-4 text-orange-600 bg-gray-100 border-2 border-orange-300 rounded focus:ring-orange-500 focus:ring-2"
+                checked={unmarkFromReplacement}
+                onChange={(e) => setUnmarkFromReplacement(e.target.checked)}
               />
-            </div>
-
-            {/* 4. Property Types */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">4. Property Types</label>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowPropertyTypes(!showPropertyTypes)}
-                  className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center text-sm"
-                >
-                  <span className="text-gray-700 font-medium">
-                    {formData.propertyTypes.length > 0 
-                      ? formData.propertyTypes.join(', ') 
-                      : 'Select property types...'}
-                  </span>
-                  <ChevronDown className={`w-4 h-4 transition-transform ${showPropertyTypes ? 'rotate-180' : ''}`} />
-                </button>
-                
-                {showPropertyTypes && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10">
-                    {propertyTypeOptions.map(type => (
-                      <label key={type} className="flex items-center space-x-3 p-2.5 hover:bg-blue-100 transition-colors cursor-pointer text-sm">
-                        <input
-                          type="checkbox"
-                          checked={formData.propertyTypes.includes(type)}
-                          onChange={() => handlePropertyTypeToggle(type)}
-                          className="w-4 h-4 text-blue-600 border-2 border-blue-300 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-gray-700 font-medium">{type}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 5. Assign Sales Rep */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">5. Assign Sales Rep *</label>
-              <select
-                value={formData.assignedTo}
-                onChange={(e) => setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
-                className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 text-sm"
-                required
-              >
-                <option value="">Select sales rep...</option>
-                {eligibleReps.map(rep => (
-                  <option key={rep.id} value={rep.id}>
-                    {rep.name} {rep.status === 'ooo' ? '(Out of Office)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 6. URL */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">6. URL</label>
+              <span>Unmark from replacement queue</span>
+            </label>
+          </div>
+        ) : (
+          <div className="border-2 border-amber-200 rounded-xl p-4 bg-amber-50">
+            <label className="flex items-center space-x-3 text-sm font-bold text-gray-700">
               <input
-                type="url"
-                value={formData.url}
-                onChange={(e) => setFormData(prev => ({ ...prev, url: e.target.value }))}
-                placeholder="Put LSManager Prospect account URL here"
-                className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 text-sm"
+                type="checkbox"
+                className="w-4 h-4 text-amber-600 bg-gray-100 border-2 border-amber-300 rounded focus:ring-amber-500 focus:ring-2"
+                checked={markForReplacement}
+                onChange={(e) => setMarkForReplacement(e.target.checked)}
               />
-            </div>
+              <span>Mark in need of replacement</span>
+            </label>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
 
-            {/* 7. Account Number */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">7. Account Number *</label>
-              <textarea
-                value={formData.accountNumber}
-                onChange={(e) => setFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
-                className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 resize-none text-sm"
-                rows={2}
-                required
+  {/* 3) Account Number */}
+  <div className="md:col-span-1">
+    <label className="block text-sm font-bold text-gray-700 mb-3">Account Number *</label>
+    <textarea
+      value={formData.accountNumber}
+      onChange={(e) => setFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
+      className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 resize-none"
+      rows={1}
+      required
+    />
+  </div>
+
+  {/* 4) Property Types */}
+  <div className="md:col-span-1">
+    <label className="block text-sm font-bold text-gray-700 mb-3">Property Types</label>
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setShowPropertyTypes(!showPropertyTypes)}
+        className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center"
+      >
+        <span className="text-gray-700 font-medium">
+          {formData.propertyTypes.length > 0 ? formData.propertyTypes.join(', ') : 'Select property types...'}
+        </span>
+        <ChevronDown className={`w-5 h-5 transition-transform ${showPropertyTypes ? 'rotate-180' : ''}`} />
+      </button>
+
+      {showPropertyTypes && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10">
+          {propertyTypeOptions.map(type => (
+            <label
+              key={type}
+              className="flex items-center space-x-3 p-3 hover:bg-blue-100 transition-colors cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={formData.propertyTypes.includes(type)}
+                onChange={() => handlePropertyTypeToggle(type)}
+                className="w-4 h-4 text-blue-600 border-2 border-blue-300 rounded focus:ring-blue-500"
               />
-            </div>
+              <span className="text-gray-700 font-medium">{type}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
 
-            {/* 8. Date Picker */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">8. Date</label>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowDatePicker(!showDatePicker)}
-                  className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center text-left text-sm"
-                >
-                  <span className="text-gray-700 font-medium">
-                    Date: {formatDateDisplay(formData.date)}
-                  </span>
-                  <Calendar className="w-4 h-4 text-gray-500" />
-                </button>
-                
-                {showDatePicker && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10 p-3">
-                    <input
-                      type="text"
-                      value={formatDateForInput(formData.date)}
-                      onChange={(e) => handleDateChange(e.target.value)}
-                      placeholder="MM/DD/YYYY"
-                      className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors text-sm"
-                    />
-                    <div className="mt-2 text-xs text-gray-500">
-                      Enter date in MM/DD/YYYY format
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+  {/* 5) URL (required to match your LeadModal UX) */}
+  <div className="md:col-span-1">
+    <label className="block text-sm font-bold text-gray-700 mb-3">URL*</label>
+    <input
+      type="url"
+      value={formData.url ?? ''}
+      onChange={(e) => setFormData(prev => ({ ...prev, url: e.target.value || null }))}
+      placeholder="Put LSManager Prospect account URL here"
+      className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+      required
+    />
+  </div>
 
-            {/* 9. Comments */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">9. Comments</label>
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCommentsDropdown(!showCommentsDropdown)}
-                  className="w-full p-2.5 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center text-left text-sm"
-                >
-                  <span className="text-gray-700 font-medium">
-                    Comments ({formData.comments.length})
-                  </span>
-                  <ChevronDown className={`w-4 h-4 transition-transform ${showCommentsDropdown ? 'rotate-180' : ''}`} />
-                </button>
-                
-                {showCommentsDropdown && (
-                  <div className="border-2 border-blue-200 rounded-xl p-3 bg-white">
-                    {formData.comments.length > 0 ? (
-                      <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
-                        {formData.comments.map((comment, index) => (
-                          <div key={index} className="text-xs text-gray-600 bg-gray-50 p-2 rounded border">
-                            {comment}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-gray-500 mb-3 p-2 bg-gray-50 rounded">
-                        No comments yet
-                      </div>
-                    )}
-                    
-                    <div className="flex space-x-2">
-                      <input
-                        type="text"
-                        value={newComment}
-                        onChange={(e) => setNewComment(e.target.value)}
-                        placeholder="Add a comment..."
-                        className="flex-1 p-2 border border-gray-300 rounded-lg text-xs"
-                        onKeyPress={(e) => e.key === 'Enter' && handleAddComment()}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddComment}
-                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs font-medium"
-                      >
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+  {/* 6) Unit Count (nullable) */}
+  <div className="md:col-span-1">
+    <label className="block text-sm font-bold text-gray-700 mb-3">Unit Count</label>
+    <input
+      type="number"
+      value={formData.unitCount ?? ''}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setFormData(prev => ({
+          ...prev,
+          unitCount: raw === '' ? null : Number(raw)
+        }));
+      }}
+      placeholder="Leave blank if unknown"
+      className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+      min="0"
+    />
+  </div>
 
-            {/* 10. Action Buttons */}
-            <div className="flex space-x-3 pt-3 border-t border-gray-200">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-100 transition-colors font-medium text-sm"
-                disabled={isSubmitting}
-              >
-                Cancel
-              </button>
-                  {isReplacementLead && onUnreplaceAndCreateNew && (
-                    <button
-                      type="button"
+  {/* 7) Assign Sales Rep */}
+  <div className="md:col-span-1">
+    <label className="block text-sm font-bold text-gray-700 mb-3">Assign Sales Rep *</label>
+    <select
+      value={formData.assignedTo}
+      onChange={(e) => setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
+      className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+      required
+    >
+      <option value="">Select sales rep...</option>
+      {eligibleReps.map(rep => {
+        const position = getRepPositionInRotation?.(rep.id);
+        return (
+          <option key={rep.id} value={rep.id}>
+            {position ? `${position}. ` : ''}{rep.name} {rep.status === 'ooo' ? '(Out of Office)' : ''}
+          </option>
+        );
+      })}
+    </select>
+  </div>
+
+  {/* 8) Date */}
+  <div className="md:col-span-1">
+    <label className="block text-sm font-bold text-gray-700 mb-3">Date*</label>
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setShowDatePicker(!showDatePicker)}
+        className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center text-left"
+      >
+        <span className="text-gray-700 font-medium">
+          Date: {formatDateDisplay(formData.date)}
+        </span>
+        <Calendar className="w-5 h-5 text-gray-500" />
+      </button>
+
+      {showDatePicker && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10 p-4">
+          <input
+            type="text"
+            value={formatDateForInput(formData.date)}
+            onChange={(e) => handleDateChange(e.target.value)}
+            placeholder="MM/DD/YYYY"
+            className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+          />
+          <div className="mt-2 text-xs text-gray-500">
+            Enter date in MM/DD/YYYY format
+          </div>
+        </div>
+      )}
+    </div>
+  </div>
+
+  {/* 9) Comments (FULL WIDTH) */}
+  <div className="md:col-span-2">
+    <label className="block text-sm font-bold text-gray-700 mb-3">Comments</label>
+    <div className="space-y-3">
+      <button
+        type="button"
+        onClick={() => setShowCommentsDropdown(!showCommentsDropdown)}
+        className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center text-left"
+      >
+        <span className="text-gray-700 font-medium">
+          Comments ({formData.comments.length})
+        </span>
+        <ChevronDown className={`w-5 h-5 transition-transform ${showCommentsDropdown ? 'rotate-180' : ''}`} />
+      </button>
+
+      {showCommentsDropdown && (
+        <div className="space-y-2 max-h-32 overflow-y-auto">
+          {formData.comments.map((comment, index) => (
+            <div key={index} className="text-sm bg-blue-50 p-3 rounded-xl border border-blue-200">
+              {comment}
+            </div>
+          ))}
+          {formData.comments.length === 0 && (
+            <div className="text-sm text-gray-500 p-3">No comments yet</div>
+          )}
+        </div>
+      )}
+
+      <div className="flex space-x-2">
+        <input
+          type="text"
+          value={newComment}
+          onChange={(e) => setNewComment(e.target.value)}
+          className="flex-1 p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+          placeholder="Add a comment..."
+          onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
+        />
+        <button
+          type="button"
+          onClick={handleAddComment}
+          className="px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all font-medium"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {/* 10) Actions (FULL WIDTH) */}
+  <div className="md:col-span-2 flex flex-col sm:flex-row gap-3 pt-2 border-t border-gray-200">
+    <button
+      type="button"
+      onClick={onClose}
+      className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-100 transition-colors font-medium"
+      disabled={isSubmitting}
+    >
+      Cancel
+    </button>
+
+    {isReplacementLead && onUnreplaceAndCreateNew && (
+      <button
+        type="button"
         onClick={handleUnreplaceAndAdd}
-        className="flex-1 px-4 py-2.5 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-colors font-medium disabled:opacity-50 text-sm"
+        className="flex-1 px-4 py-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-colors font-medium disabled:opacity-50"
         disabled={isSubmitting}
       >
         UnReplace & Add
       </button>
     )}
-              <button
-                type="submit"
-                className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 text-sm"
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? 'Updating...' : 'Update'}
-              </button>
-            </div>
-          </form>
+
+    <button
+      type="submit"
+      className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
+      disabled={isSubmitting}
+    >
+      {isSubmitting ? 'Updating...' : 'Update'}
+    </button>
+  </div>
+</form>
+
+
         </div>
       </div>
 

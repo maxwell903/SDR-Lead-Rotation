@@ -593,3 +593,36 @@ code {
 .animation-delay-2000 {
   animation-delay: 2000ms;
 }
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .5;
+  }
+}
+
+.ring-2 {
+  box-shadow: 0 0 0 2px var(--ring-color, rgba(59, 130, 246, 0.5));
+}
+
+.ring-blue-300 {
+  --ring-color: rgba(147, 197, 253, 0.8);
+}
+
+/* Smooth transitions for replacement states */
+.entry-item {
+  transition: all 0.2s ease-in-out;
+}
+
+.scale-90 {
+  transform: scale(0.9);
+}
+
+.opacity-75 {
+  opacity: 0.75;
+}

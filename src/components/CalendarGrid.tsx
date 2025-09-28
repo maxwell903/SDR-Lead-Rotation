@@ -298,90 +298,100 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   };
 
   // NEW: replace default style when an entry participates in replacement flow
-  const getEntryVisualClasses = (entry: LeadEntry) => {
-    const vis = getCalendarEntryVisual(entry, replacementState);
-    if (vis.isOriginalMarkedOpen) {
-      // Original lead marked for replacement (open) — orange box
-      return 'text-orange-700 bg-orange-50 border-orange-200';
+  const getEntryVisualClasses = (entry: LeadEntry): string => {
+  let baseClasses = "";
+  
+  if (entry.type === 'lead' && entry.leadId) {
+    const visual = getCalendarEntryVisual(entry, replacementState);
+    
+    if (visual.isOriginalMarkedOpen) {
+      // MFR - Marked for replacement (orange/yellow)
+      baseClasses = "bg-orange-100 border-orange-300 text-orange-800";
+    } else if (visual.isOriginalMarkedClosed) {
+      // RLBR - Replaced lead (grey, smaller)
+      baseClasses = "bg-gray-100 border-gray-300 text-gray-600 text-xs opacity-75 scale-90";
+    } else if (visual.isReplacementLead) {
+      // LRL - Lead replacing lead (green)
+      baseClasses = "bg-emerald-100 border-emerald-300 text-emerald-800 ring-1 ring-emerald-200";
+    } else {
+      // NL - Normal lead
+      baseClasses = "bg-white border-gray-200 text-gray-900";
     }
-    if (vis.isReplacementLead) {
-      // Replacement lead — add a soft success ring while keeping base styling
-      return `${getEntryTypeStyle(entry.type)} ring-1 ring-emerald-300`;
-    }
-    return getEntryTypeStyle(entry.type);
-  };
+  } else {
+    // Skip or other entry types
+    baseClasses = "bg-blue-50 border-blue-200 text-blue-800";
+  }
+  
+  return baseClasses;
+};
 
 
   // Function to render entry content with hyperlink support
-  const renderEntryContent = (entry: LeadEntry) => {
-    if (entry.type === 'lead') {
-      const entryUrl = getEntryUrl(entry);
-      
+  const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
+  if (entry.type === 'lead' && entry.leadId) {
+    const visual = getCalendarEntryVisual(entry, replacementState);
+    const partner = getReplacementPartnerLeadId(entry, replacementState);
+    
+    if (visual.isOriginalMarkedClosed && partner.partnerLeadId) {
+      // RLBR - Show replacement message
+      const partnerLead = leads.find(l => l.id === partner.partnerLeadId);
       return (
-        <div className="text-xs">
-          <div className="font-medium truncate flex items-center">
-            {entryUrl ? (
-              <button
-                onClick={(e) => handleHyperlinkClick(e, entry)}
-                 className="text-blue-600 hover:text-blue-800 underline transition-colors flex items-center space-x-1 truncate"
-                title={`Click to open: ${entryUrl}`}
-              >
-                <span className="truncate">{entry.value}</span>
-                <ExternalLink className="w-3 h-3 flex-shrink-0" />
-              </button>
-            ) : (
-              <span className="truncate">{entry.value}</span>
-            )}
+        <div className="space-y-1">
+          <div className="line-through text-xs">{entry.value}</div>
+          <div className="text-[10px] text-gray-500">
+            Replaced by {partnerLead?.accountNumber || 'N/A'}
           </div>
-          {entry.unitCount && (
-            <div className="text-gray-500">
-              {entry.unitCount} unit{entry.unitCount !== 1 ? 's' : ''}
-            </div>
-          )}
-
-         {/* NEW: subtle indicators for replacement relationships */}
-          {(() => {
-            const vis = getCalendarEntryVisual(entry, replacementState);
-            const partner = getReplacementPartnerLeadId(entry, replacementState);
-            const partnerAcct = getAccountByLeadId(partner.partnerLeadId || undefined);
-            if (vis.isOriginalMarkedOpen) {
-              return (
-                <div className="mt-0.5">
-                  <ReplacementPill relation="needs" text="Needs Replacement" />
-                </div>
-              );
-            }
-            if (vis.isReplacementLead) {
-              return (
-                <div className="mt-0.5 flex items-center space-x-2">
-                  <ReplacementPill relation="replaces" text="Replacement" />
-                  {partnerAcct && (
-                    <span className="text-[10px] text-emerald-700">for {partnerAcct}</span>
-                  )}
-                </div>
-              );
-            }
-            if (vis.isOriginalMarkedClosed && partnerAcct) {
-              // show tiny note on the original that it was replaced
-              return (
-                <div className="mt-0.5">
-                  <span className="text-[10px] text-emerald-700">Replaced by {partnerAcct}</span>
-                </div>
-              );
-            }
-            return null;
-          })()} 
-
+        </div>
+      );
+    } else if (visual.isReplacementLead && partner.partnerLeadId) {
+      // LRL - Show what it's replacing
+      const originalLead = leads.find(l => l.id === partner.partnerLeadId);
+      return (
+        <div className="space-y-1">
+          <div className="font-semibold">{entry.value}</div>
+          <div className="text-[10px] text-emerald-600">
+            Replaces {originalLead?.accountNumber || 'N/A'}
+          </div>
         </div>
       );
     } else {
+      // Normal lead or MFR
       return (
-        <span className="font-medium text-sm">
-          {entry.value}
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="truncate">{entry.value}</span>
+          {visual.isOriginalMarkedOpen && (
+            <ReplacementPill relation="needs" text="MFR" />
+          )}
+        </div>
       );
     }
-  };
+  }
+  
+  // Skip entries
+  return <span className="italic">Skip</span>;
+};
+
+const handleEntryHover = (entry: LeadEntry, isHovering: boolean) => {
+  if (entry.type === 'lead' && entry.leadId) {
+    const partner = getReplacementPartnerLeadId(entry, replacementState);
+    
+    if (partner.partnerLeadId) {
+      // Find and animate the partner entry
+      const partnerElement = document.querySelector(`[data-lead-id="${partner.partnerLeadId}"]`);
+      const currentElement = document.querySelector(`[data-lead-id="${entry.leadId}"]`);
+      
+      if (partnerElement && currentElement) {
+        if (isHovering) {
+          partnerElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-300');
+          currentElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-300');
+        } else {
+          partnerElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-300');
+          currentElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-300');
+        }
+      }
+    }
+  }
+};
 
   return (
     <div className="bg-white rounded-lg shadow-sm border" style={containerStyles}>
@@ -716,17 +726,33 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                           entries.map(entry => (
                             <div
                               key={entry.id}
+                              data-lead-id={entry.leadId} // Add data attribute for hover targeting
                               className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
+                              onMouseEnter={() => handleEntryHover(entry, true)}
+                              onMouseLeave={() => handleEntryHover(entry, false)}
                             >
-
                               <div className="flex-1 min-w-0">
                                 {renderEntryContent(entry)}
                               </div>
-                              {/* NEW: hover actions include "Replace" for leads not already in replacement flow */}
+
+                              {/* Hover actions */}
                               <div className="hidden group-hover:flex items-center space-x-1 ml-2">
                                 {entry.type === 'lead' && entry.leadId && (() => {
                                   const vis = getCalendarEntryVisual(entry, replacementState);
-                                  if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen) {
+                                  if (vis.isOriginalMarkedOpen) {
+                                    return (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onRemoveReplacementMark(entry.leadId!);
+                                        }}
+                                        className="p-1 text-gray-600 hover:text-gray-800 text-xs"
+                                        title="Remove replacement mark"
+                                      >
+                                        Unmark
+                                      </button>
+                                    );
+                                  } else if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen && !vis.isOriginalMarkedClosed) {
                                     return (
                                       <MarkForReplacementButton
                                         onClick={(e) => {
@@ -739,34 +765,32 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                                   return null;
                                 })()}
                                 
+                                {/* Edit and Delete buttons */}
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (entry.type === 'lead') {
                                       const lead = getLeadForEntry(entry);
-                                          if (lead) {
-                                            if (onEditLead) {
-                                              onEditLead(lead);
-                                            } else {
-                                            // fallback to original entry editor if parent didn't pass onEditLead yet
-                                              handleEntryAction(e, 'edit', entry);
-                                            }
-                                          }
+                                      if (lead) onEditLead(lead);
                                     } else {
                                       handleEntryAction(e, 'edit', entry);
                                     }
                                   }}
                                   className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
-                                  title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
+                                  title={entry.type === 'lead' ? "Edit lead" : "Edit entry"}
                                 >
-                                  <Edit className="w-3 h-3" />
+                                  ✏️
                                 </button>
+                                
                                 <button
-                                  onClick={(e) => handleEntryAction(e, 'delete', entry)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteEntry(entry.id);
+                                  }}
                                   className="p-1 text-gray-400 hover:text-red-600 transition-colors rounded"
                                   title="Delete entry"
                                 >
-                                  <Trash2 className="w-3 h-3" />
+                                  🗑️
                                 </button>
                               </div>
                             </div>

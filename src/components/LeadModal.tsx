@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { X, Trash2, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   ReplacementState,
@@ -79,7 +79,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
     accountNumber: '',
     url: '',
     propertyTypes: [] as string[],
-    unitCount: 0,
+    unitCount: null as number | null,
     comments: [] as string[],
     assignedTo: '',
     date: selectedDate || new Date()
@@ -137,7 +137,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
       assignedTo: formData.assignedTo
     };
     
-    const isOver1k = leadData.unitCount >= 1000;
+    const isOver1k = (leadData.unitCount ?? 0) >= 1000;
+
     
     // Filter sales reps based on parameters
     const filtered = salesReps.filter(rep => {
@@ -148,8 +149,12 @@ const LeadModal: React.FC<LeadModalProps> = ({
       if (isOver1k && !rep.parameters.canHandle1kPlus) return false;
       
       // Check max units constraint
-      if (rep.parameters.maxUnits && leadData.unitCount > rep.parameters.maxUnits) return false;
-      
+       if (
+        leadData.unitCount != null &&
+        rep.parameters.maxUnits &&
+        leadData.unitCount > rep.parameters.maxUnits
+      ) return false;
+
       // Check property types - rep must handle ALL selected property types
       if (leadData.propertyTypes.length > 0) {
         const hasAllPropertyTypes = leadData.propertyTypes.every((type: string) => 
@@ -187,7 +192,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
         accountNumber: editingEntry.value || '',
         url: editingEntry.url || '',
         propertyTypes: [], // Will need to get from lead data
-        unitCount: editingEntry.unitCount || 0,
+         unitCount: editingEntry.unitCount ?? null,
         comments: editingEntry.comments || [],
         assignedTo: editingEntry.repId || '',
         date: selectedDate || new Date()
@@ -214,7 +219,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
     if (!selectedCell && !isEditing && entryType === 'lead') {
       const leadData = {
         propertyTypes: formData.propertyTypes,
-        unitCount: formData.unitCount,
+        unitCount: formData.unitCount ?? 0,
         assignedTo: formData.assignedTo
       };
       
@@ -240,8 +245,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
         alert('Sales rep assignment is required for leads');
         return;
       }
-      if (formData.unitCount <= 0) {
-        alert('Unit count must be greater than 0 for leads');
+      // Allow blank; only block negative values just in case
+      if (formData.unitCount != null && formData.unitCount < 0) {
+        alert('Unit count cannot be negative');
         return;
       }
     } else {
@@ -260,15 +266,15 @@ const LeadModal: React.FC<LeadModalProps> = ({
         accountNumber: formData.accountNumber,
         url: formData.url,
         propertyTypes: formData.propertyTypes,
-        unitCount: entryType === 'lead' ? formData.unitCount : undefined,
+        unitCount: entryType === 'lead' ? (formData.unitCount ?? null) : undefined,
         comments: formData.comments,
         day: formData.date.getDate(),
         month: formData.date.getMonth(),
         year: formData.date.getFullYear(),
         repId: formData.assignedTo,
         assignedTo: formData.assignedTo,
-        rotationTarget: entryType === 'lead' 
-          ? (formData.unitCount >= 1000 ? 'over1k' : 'sub1k')
+        rotationTarget: entryType === 'lead'
+          ? ((formData.unitCount ?? 0) >= 1000 ? 'over1k' : 'sub1k')
           : 'sub1k',
         replaceLeadId: replaceToggle ? originalLeadIdToReplace : undefined,
         id: editingEntry?.id
@@ -339,11 +345,36 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
   // Get position number for rep in rotation
   const getRepPositionInRotation = (repId: string) => {
-    const isOver1k = formData.unitCount >= 1000;
+    const isOver1k = (formData.unitCount ?? 0) >= 1000;
     const rotationOrder = isOver1k ? rotationState.normalRotationOver1k : rotationState.normalRotationSub1k;
     const position = rotationOrder.indexOf(repId);
     return position !== -1 ? position + 1 : null;
   };
+
+  // --- Height sync: make replacement box match account number block when collapsed ---
+  const accBoxRef = useRef<HTMLDivElement | null>(null);
+  const [collapsedMinH, setCollapsedMinH] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    const el = accBoxRef.current;
+    if (!el) return;
+    const compute = () => setCollapsedMinH(el.getBoundingClientRect().height);
+    compute();
+    const ro = 'ResizeObserver' in window ? new ResizeObserver(compute) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', compute);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', compute);
+    };
+  }, []);
+
+  // Recompute when the collapsed/expanded state changes
+  useEffect(() => {
+    if (!replaceToggle && accBoxRef.current) {
+      setCollapsedMinH(accBoxRef.current.getBoundingClientRect().height);
+    }
+  }, [replaceToggle]);
 
   return (
     <>
@@ -376,10 +407,13 @@ const LeadModal: React.FC<LeadModalProps> = ({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[calc(95vh-180px)] overflow-y-auto">
+          <form
+            onSubmit={handleSubmit}
+            className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 max-h-[calc(95vh-180px)] overflow-y-auto"
+          >
             {/* 1. Entry Type */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-3">1. Entry Type</label>
+            <div className="md:col-span-1">
+              <label className="block text-sm font-bold text-gray-700 mb-3">Entry Type</label>
               <select
                 value={entryType}
                 onChange={(e) => setEntryType(e.target.value as any)}
@@ -393,53 +427,63 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </select>
             </div>
 
-            {/* 2. Replacement Toggle */}
-            {entryType === 'lead' && (
-              <div className="border-2 border-amber-200 rounded-xl p-5 bg-amber-50">
-                <label className="flex items-center space-x-3 text-sm font-bold text-gray-700">
-                  <input
-                    type="checkbox"
-                    className="w-5 h-5 text-amber-600 bg-gray-100 border-2 border-amber-300 rounded focus:ring-amber-500 focus:ring-2"
-                    checked={replaceToggle}
-                    onChange={(e) => {
-                      setReplaceToggle(e.target.checked);
-                      if (!e.target.checked) setOriginalLeadIdToReplace('');
-                    }}
-                  />
-                  <span>2. Replace Lead</span>
-                </label>
-                {replaceToggle && (
-                  <div className="mt-4 space-y-3">
-                    <label className="block text-xs font-medium text-gray-600">
-                      Choose a lead in need of replacement
-                    </label>
-                    <select
-                      className="w-full rounded-xl border-2 border-amber-300 px-4 py-3 text-sm focus:ring-2 focus:ring-amber-500 bg-white"
-                      value={originalLeadIdToReplace}
-                      onChange={(e) => setOriginalLeadIdToReplace(e.target.value)}
-                    >
-                      <option value="">— Select a lead to replace —</option>
-                      {replacementOptions.map(opt => (
-                        <option key={opt.leadId} value={opt.leadId}>
-                          {opt.accountNumber} - {opt.repName} ({new Date(opt.markedAt).toLocaleDateString()})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+            {/* 2. Replacement Toggle (aligned with Entry Type) */}
+            <div className="md:col-span-1">
+              {/* Desktop-only spacer to match the Entry Type label height */}
+              <div className="hidden md:block">
+                <label className="block text-sm font-bold text-gray-700 mb-3 invisible">Entry Type</label>
               </div>
-            )}
 
-            {/* 3. Unit Count */}
+              {entryType === 'lead' && (
+                <div
+                  className="border border-amber-200 rounded-xl p-3 sm:p-4 bg-amber-50 transition-[min-height]"
+                  style={!replaceToggle && collapsedMinH ? { minHeight: collapsedMinH * 0.5 } : undefined}
+                >
+                  <label className="flex items-center space-x-3 text-sm font-bold text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 text-amber-600 bg-gray-100 border border-amber-300 rounded focus:ring-amber-500 focus:ring-2"
+                      checked={replaceToggle}
+                      onChange={(e) => {
+                        setReplaceToggle(e.target.checked);
+                        if (!e.target.checked) setOriginalLeadIdToReplace('');
+                      }}
+                    />
+                    <span className="leading-tight">Replace Lead</span>
+                  </label>
+
+                  {replaceToggle && (
+                    <div className="mt-4 space-y-3">
+                      <label className="block text-xs font-medium text-gray-600">
+                        Choose a lead in need of replacement
+                      </label>
+                      <select
+                        className="w-full rounded-xl border-2 border-amber-300 px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 bg-white"
+                        value={originalLeadIdToReplace}
+                        onChange={(e) => setOriginalLeadIdToReplace(e.target.value)}
+                      >
+                        <option value="">— Select a lead to replace —</option>
+                        {replacementOptions.map(opt => (
+                          <option key={opt.leadId} value={opt.leadId}>
+                            {opt.accountNumber} - {opt.repName} ({new Date(opt.markedAt).toLocaleDateString()})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 3. Account Number */}
             {entryType === 'lead' && (
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-3">3. Unit Count *</label>
-                <input
-                  type="number"
-                  value={formData.unitCount}
-                  onChange={(e) => setFormData(prev => ({ ...prev, unitCount: parseInt(e.target.value) || 0 }))}
-                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
-                  min="1"
+              <div className="md:col-span-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3">Account Number *</label>
+                <textarea
+                  value={formData.accountNumber}
+                  onChange={(e) => setFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
+                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 resize-none"
+                  rows={1}
                   required
                 />
               </div>
@@ -447,8 +491,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
             {/* 4. Property Types */}
             {entryType === 'lead' && (
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-3">4. Property Types</label>
+              <div className="md:col-span-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3">Property Types</label>
                 <div className="relative">
                   <button
                     type="button"
@@ -456,17 +500,20 @@ const LeadModal: React.FC<LeadModalProps> = ({
                     className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center"
                   >
                     <span className="text-gray-700 font-medium">
-                      {formData.propertyTypes.length > 0 
-                        ? formData.propertyTypes.join(', ') 
+                      {formData.propertyTypes.length > 0
+                        ? formData.propertyTypes.join(', ')
                         : 'Select property types...'}
                     </span>
                     <ChevronDown className={`w-5 h-5 transition-transform ${showPropertyTypes ? 'rotate-180' : ''}`} />
                   </button>
-                  
+
                   {showPropertyTypes && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10">
                       {propertyTypeOptions.map(type => (
-                        <label key={type} className="flex items-center space-x-3 p-3 hover:bg-blue-100 transition-colors cursor-pointer">
+                        <label
+                          key={type}
+                          className="flex items-center space-x-3 p-3 hover:bg-blue-100 transition-colors cursor-pointer"
+                        >
                           <input
                             type="checkbox"
                             checked={formData.propertyTypes.includes(type)}
@@ -482,9 +529,44 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </div>
             )}
 
-            {/* 5. Assign Sales Rep */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-3">5. Assign Sales Rep *</label>
+            {/* 5. URL */}
+            {entryType === 'lead' && (
+              <div className="md:col-span-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3">URL*</label>
+                <input
+                  type="url"
+                  value={formData.url}
+                  onChange={(e) => setFormData(prev => ({ ...prev, url: e.target.value }))}
+                  placeholder="Put LSManager Prospect account URL here"
+                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+                  required
+                />
+              </div>
+            )}
+
+            {/* 6. Unit Count (optional) */}
+            {entryType === 'lead' && (
+              <div className="md:col-span-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3">Unit Count</label>
+                <input
+                  type="number"
+                  value={formData.unitCount ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setFormData(prev => ({
+                      ...prev,
+                      unitCount: raw === '' ? null : Number(raw)
+                    }));
+                  }}
+                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+                  min="0"
+                />
+              </div>
+            )}
+
+            {/* 7. Assign Sales Rep */}
+            <div className="md:col-span-1">
+              <label className="block text-sm font-bold text-gray-700 mb-3">Assign Sales Rep *</label>
               <select
                 value={formData.assignedTo}
                 onChange={(e) => setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
@@ -503,37 +585,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </select>
             </div>
 
-            {/* 6. URL */}
-            {entryType === 'lead' && (
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-3">6. URL</label>
-                <input
-                  type="url"
-                  value={formData.url}
-                  onChange={(e) => setFormData(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder="Put LSManager Prospect account URL here"
-                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
-                />
-              </div>
-            )}
-
-            {/* 7. Account Number */}
-            {entryType === 'lead' && (
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-3">7. Account Number *</label>
-                <textarea
-                  value={formData.accountNumber}
-                  onChange={(e) => setFormData(prev => ({ ...prev, accountNumber: e.target.value }))}
-                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 resize-none"
-                  rows={2}
-                  required
-                />
-              </div>
-            )}
-
             {/* 8. Date Picker */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-3">8. Date</label>
+            <div className="md:col-span-1">
+              <label className="block text-sm font-bold text-gray-700 mb-3">Date*</label>
               <div className="relative">
                 <button
                   type="button"
@@ -545,7 +599,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
                   </span>
                   <Calendar className="w-5 h-5 text-gray-500" />
                 </button>
-                
+
                 {showDatePicker && (
                   <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10 p-4">
                     <input
@@ -563,9 +617,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </div>
             </div>
 
-            {/* 9. Comments */}
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-3">9. Comments</label>
+            {/* Comments (FULL WIDTH) */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-bold text-gray-700 mb-3">Comments</label>
               <div className="space-y-3">
                 <button
                   type="button"
@@ -577,7 +631,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
                   </span>
                   <ChevronDown className={`w-5 h-5 transition-transform ${showCommentsDropdown ? 'rotate-180' : ''}`} />
                 </button>
-                
+
                 {showCommentsDropdown && (
                   <div className="space-y-2 max-h-32 overflow-y-auto">
                     {formData.comments.map((comment, index) => (
@@ -590,7 +644,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
                     )}
                   </div>
                 )}
-                
+
                 <div className="flex space-x-2">
                   <input
                     type="text"
@@ -610,6 +664,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </div>
             </div>
           </form>
+
 
           {/* 10. Footer */}
           <div className="bg-blue-50 px-6 py-4 border-t-2 border-blue-200 flex space-x-4">
