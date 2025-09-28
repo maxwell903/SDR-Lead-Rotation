@@ -161,13 +161,14 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
     // Initialize all reps in this rotation with 0 hits
     baseOrder.forEach(repId => hitCounts.set(repId, 0));
 
-    // UPDATED: Exclude ALL marked leads, not just closed ones
-    const markedLeadIds = new Set<string>();
-    for (const rec of Object.values(replacementState.byLeadId || {})) {
-      if (rec && rec.leadId) {
-        markedLeadIds.add(rec.leadId);
-      }
-    }
+  // Exclude ALL marked leads (MFR & RLBR originals)
+  const markedLeadIds = new Set<string>();
+  // Exclude LRL leads (replacements) as well => +0 hits for LRL
+  const lrlLeadIds = new Set<string>();
+  for (const rec of Object.values(replacementState?.byLeadId || {})) {
+    if (rec?.leadId) markedLeadIds.add(rec.leadId);
+    if (rec?.replacedByLeadId) lrlLeadIds.add(rec.replacedByLeadId);
+  }
 
     filteredEntries.forEach(entry => {
       // Only count hits for reps that are in this specific rotation
@@ -179,9 +180,9 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
 
       if (entry.type === 'skip') {
         qualifies = true;
-      } else if (entry.type === 'lead' && entry.leadId) {
-        // UPDATED: Skip counting ANY marked lead (open or closed)
-        if (markedLeadIds.has(entry.leadId)) {
+    } else if (entry.type === 'lead' && entry.leadId) {
+      // Skip counting ANY marked lead (open or closed) AND any LRL replacement
+      if (markedLeadIds.has(entry.leadId) || lrlLeadIds.has(entry.leadId)) {
           qualifies = false;
         } else {
           const lead = leadsMap.get(entry.leadId);

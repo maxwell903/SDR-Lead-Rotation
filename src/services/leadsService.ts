@@ -222,7 +222,7 @@ export function getLRLVisualState(entry: LeadEntry, replacementState: Replacemen
   isNeedsReplacement: boolean;
   partnerLeadId?: string;
   partnerAccountNumber?: string;
-  hitValue: number; // +1 for LRL and NL, 0 for RLBR and NA, -1 for MFR
+  hitValue: number; // NL = +1, LRL = 0, RLBR = 0, NA = 0, MFR = -1
 } {
   if (!entry.leadId || !replacementState) {
     // For non-lead entries or when no replacement state
@@ -261,7 +261,7 @@ export function getLRLVisualState(entry: LeadEntry, replacementState: Replacemen
       isNeedsReplacement: false,
       partnerLeadId: originalRecord.leadId,
       partnerAccountNumber: originalRecord.accountNumber,
-      hitValue: 1 // LRL = +1 hit
+      hitValue: 0 // LRL = +0 hit
     };
   }
   
