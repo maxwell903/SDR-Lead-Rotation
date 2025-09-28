@@ -348,6 +348,8 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedCell, setSelectedCell] = useState<{ day: number; repId: string } | null>(null);
   const [editingEntry, setEditingEntry] = useState<LeadEntry | null>(null);
   const [activeSaveOperations, setActiveSaveOperations] = useState<Set<string>>(new Set());
+  const [isDbLoading, setIsDbLoading] = useState(false);
+  const [dbLoadingMessage, setDbLoadingMessage] = useState('');
   
 
   // 2) Derived values (fine to compute every render)
@@ -550,6 +552,14 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
   const handleUpdateEntry = async (entryId: string, updatedData: any) => {
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
   
+  // Add loading state for database operations
+  if (updatedData.type === 'lead') {
+    setIsDbLoading(true);
+    setDbLoadingMessage('Updating lead...');
+  }
+  
+  try {
+  
   updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
     const existingEntry = entries.find(e => e.id === entryId);
     
@@ -571,8 +581,9 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     }
 
     // Handle lead updates - save to database
+    // Handle lead updates - save to database ONLY
     if (existingEntry.leadId) {
-      // Update the lead in the database
+      // Update the lead in the database - let real-time subscription update UI
       updateLead(existingEntry.leadId, {
         accountNumber: updatedData.accountNumber,
         url: updatedData.url,
@@ -585,25 +596,24 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
         alert('Failed to update lead. Please try again.');
       });
 
-      // Update local entry safely
-      const updatedEntry = {
-        repId: updatedData.assignedTo,
-        value: updatedData.accountNumber,
-        url: updatedData.url,
-        comments: updatedData.comments || [],
-        unitCount: updatedData.unitCount,
-        rotationTarget: (updatedData.unitCount >= 1000 ? 'over1k' : 'sub1k') as 'sub1k' | 'over1k'
-      };
-      
-      return safeUpdateEntryInState(entries, entryId, updatedEntry);
+      // Don't update local state - database hook will handle UI updates
+      return entries;
     }
 
+    return entries;
+    
     return entries;
   });
 
   setShowLeadModal(false);
   setSelectedCell(null);
   setEditingEntry(null);
+  } finally {
+    if (updatedData.type === 'lead') {
+      setIsDbLoading(false);
+      setDbLoadingMessage('');
+    }
+  }
 };
 
 
@@ -784,6 +794,14 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     const entry = currentMonthData.entries.find(e => e.id === entryId);
     
+    // Add loading state for database operations
+    if (entry?.type === 'lead') {
+      setIsDbLoading(true);
+      setDbLoadingMessage('Deleting lead...');
+    }
+    
+    try {
+    
     // Enhanced guard: Check if lead can be deleted and show warnings
     if (entry?.type === 'lead' && entry.leadId) {
       try {
@@ -816,30 +834,27 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     }
 
     if (entry) {
-      // Remove from local entries
-      const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
-      
-            // If it's a lead, delete from database (using enhanced deletion)
+      // If it's a lead, delete from database ONLY
       if (entry.leadId) {
         try {
           await removeLead(entry.leadId);
-          // Force refresh replacement state after successful deletion
-          // This ensures the rotation panel updates correctly
-          // The replacement state will be updated via real-time subscription
+          // Database hook will handle UI updates via real-time subscription
           console.log('Lead deleted successfully with replacement handling');
         } catch (error) {
           console.error('Failed to delete lead from database:', error);
           alert('Failed to delete lead. Please try again.');
-          // Rollback the optimistic UI update on error
-          await refresh();
           return;
         }
+        // Don't update local state for leads - let database hook handle it
+        return;
       }
+      
+      // Only update local state for non-lead entries (skip, ooo, next)
+      const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
       
       const updatedData = {
         ...currentMonthData,
         entries: updatedEntries,
-        // leads come from DB via hook, so don't manage them locally
         leads: currentMonthData.leads
       };
       
@@ -863,6 +878,12 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
         }));
       } 
     }   // closes outer: if (entry)
+    } finally {
+      if (entry?.type === 'lead') {
+        setIsDbLoading(false);
+        setDbLoadingMessage('');
+      }
+    }
   };
 
   const handleEditEntry = (entry: LeadEntry) => {
@@ -960,6 +981,14 @@ const handleDeleteLead = async (leadId: string) => {
   return (
     <AuthWrapper>
     <div className="min-h-screen bg-gray-50">
+      {isDbLoading && (
+        <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="flex flex-col items-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-orange-200 border-t-orange-500"></div>
+            <p className="mt-4 text-orange-700 font-medium">{dbLoadingMessage}</p>
+          </div>
+        </div>
+      )}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
