@@ -29,11 +29,29 @@ export function useLeads() {
   const [state, setState] = useState<State>({ leads: [], loading: true, error: null })
   const busy = useRef(false)
 
+  // Debounce timer for realtime refreshes (helps under StrictMode)
+  const refreshTimer = useRef<number | null>(null)
+
+  // Ensure we never show the same lead twice when optimistic + realtime echo overlap
+  const dedupeById = <T extends { id: string }>(arr: T[]): T[] => {
+    const seen = new Set<string>()
+    const out: T[] = []
+    for (const item of arr) {
+      const id = (item as any)?.id
+      if (!id || !seen.has(id)) {
+        if (id) seen.add(id)
+        out.push(item)
+      }
+    }
+    return out
+  }
+
   const refresh = async () => {
     try {
       setState(s => ({ ...s, loading: true, error: null }))
       const leads = await listLeads()
-      setState({ leads, loading: false, error: null })
+     // Safety: never allow duplicate ids from any source
+      setState({ leads: dedupeById(leads), loading: false, error: null })
     } catch (e: any) {
       setState({ leads: [], loading: false, error: e?.message ?? 'Failed to load leads' })
     }
@@ -42,9 +60,23 @@ export function useLeads() {
   useEffect(() => {
     refresh()
     const off = subscribeLeads(() => {
-      if (!busy.current) refresh()
+      if (busy.current) return
+      // Debounce refresh to collapse StrictMode replays / bursty events
+      if (refreshTimer.current) {
+        window.clearTimeout(refreshTimer.current)
+      }
+      refreshTimer.current = window.setTimeout(() => {
+        refresh()
+        refreshTimer.current = null
+      }, 60)
     })
-    return off
+    return () => {
+      if (refreshTimer.current) {
+        window.clearTimeout(refreshTimer.current)
+        refreshTimer.current = null
+      }
+      off()
+    }
   }, [])
 
   /**
@@ -55,8 +87,8 @@ export function useLeads() {
     if (busy.current) return
     busy.current = true
     try {
-      // Optimistic UI
-      setState(s => ({ ...s, leads: next }))
+      // Optimistic UI (but keep single copy per id)
+      setState(s => ({ ...s, leads: dedupeById(next) }))
 
       // Compute deletes against current DB state
       const current = await listLeads()
@@ -88,7 +120,8 @@ export function useLeads() {
   const addLead = async (lead: Omit<Lead, 'id'> & Partial<Pick<Lead, 'id'>>) => {
     try {
       const created = await createLead(lead)
-      setState(s => ({ ...s, leads: [created, ...s.leads] }))
+      // Optimistic, but deduped against server echo
+      setState(s => ({ ...s, leads: dedupeById([created, ...s.leads]) }))
       return created
     } catch (e: any) {
       setState(s => ({ ...s, error: e?.message ?? 'Failed to create lead' }))
@@ -123,7 +156,8 @@ export function useLeads() {
       }
       
       const created = await createLeadWithReplacement(lead, originalLeadIdToReplace)
-      setState(s => ({ ...s, leads: [created, ...s.leads] }))
+      // Optimistic, but deduped against server echo
+      setState(s => ({ ...s, leads: dedupeById([created, ...s.leads]) }))
       return created
     } catch (e: any) {
       setState(s => ({ ...s, error: e?.message ?? 'Failed to create replacement lead' }))
@@ -138,7 +172,9 @@ export function useLeads() {
       // Optimistic update for immediate UI feedback
       setState(s => ({
         ...s,
-        leads: s.leads.map(l => (l.id === id ? { ...l, ...patch } : l))
+        leads: dedupeById(
+          s.leads.map(l => (l.id === id ? ({ ...l, ...patch } as Lead) : l))
+        )
       }))
 
       const updated = await updateOne(id, patch)
@@ -146,7 +182,9 @@ export function useLeads() {
       // Update with server response
       setState(s => ({
         ...s,
-        leads: s.leads.map(l => (l.id === id ? updated : l))
+        leads: dedupeById(
+          s.leads.map(l => (l.id === id ? updated : l))
+        )
       }))
       
       return updated

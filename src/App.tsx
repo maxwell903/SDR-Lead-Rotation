@@ -551,25 +551,16 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 
   const handleUpdateEntry = async (entryId: string, updatedData: any) => {
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
+  const existingEntry = currentMonthData.entries.find(e => e.id === entryId);
   
-  // Add loading state for database operations
-  if (updatedData.type === 'lead') {
-    setIsDbLoading(true);
-    setDbLoadingMessage('Updating lead...');
+  if (!existingEntry) {
+    console.warn('Entry not found for update:', entryId);
+    return;
   }
-  
-  try {
-  
-  updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
-    const existingEntry = entries.find(e => e.id === entryId);
-    
-    if (!existingEntry) {
-      console.warn('Entry not found for update:', entryId);
-      return entries;
-    }
 
-    // Handle non-lead entries locally
-    if (updatedData.type !== 'lead') {
+  // Handle non-lead entries locally (keep this as requested)
+  if (updatedData.type !== 'lead') {
+    updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
       const updatedEntry = {
         type: updatedData.type,
         value: updatedData.type.toUpperCase(),
@@ -578,41 +569,44 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
       };
       
       return safeUpdateEntryInState(entries, entryId, updatedEntry);
-    }
-
-    // Handle lead updates - save to database
-    // Handle lead updates - save to database ONLY
-    if (existingEntry.leadId) {
-      // Update the lead in the database - let real-time subscription update UI
-      updateLead(existingEntry.leadId, {
-        accountNumber: updatedData.accountNumber,
-        url: updatedData.url,
-        propertyTypes: updatedData.propertyTypes,
-        unitCount: updatedData.unitCount,
-        assignedTo: updatedData.assignedTo,
-        comments: updatedData.comments || []
-      }).catch(error => {
-        console.error('Failed to update lead:', error);
-        alert('Failed to update lead. Please try again.');
-      });
-
-      // Don't update local state - database hook will handle UI updates
-      return entries;
-    }
-
-    return entries;
+    });
     
-    return entries;
-  });
+    setShowLeadModal(false);
+    setSelectedCell(null);
+    setEditingEntry(null);
+    return;
+  }
 
-  setShowLeadModal(false);
-  setSelectedCell(null);
-  setEditingEntry(null);
+  // Handle lead updates - database ONLY
+  if (!existingEntry.leadId) {
+    console.warn('Lead entry missing leadId:', entryId);
+    return;
+  }
+
+  setIsDbLoading(true);
+  setDbLoadingMessage('Updating lead...');
+  
+  try {
+    await updateLead(existingEntry.leadId, {
+      accountNumber: updatedData.accountNumber,
+      url: updatedData.url,
+      propertyTypes: updatedData.propertyTypes,
+      unitCount: updatedData.unitCount,
+      assignedTo: updatedData.assignedTo,
+      comments: updatedData.comments || []
+    });
+    
+    // Database subscription will handle UI updates
+    setShowLeadModal(false);
+    setSelectedCell(null);
+    setEditingEntry(null);
+    
+  } catch (error) {
+    console.error('Failed to update lead:', error);
+    alert('Failed to update lead. Please try again.');
   } finally {
-    if (updatedData.type === 'lead') {
-      setIsDbLoading(false);
-      setDbLoadingMessage('');
-    }
+    setIsDbLoading(false);
+    setDbLoadingMessage('');
   }
 };
 
@@ -716,25 +710,19 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     return;
   }
   
-  // Check current month local entries  
-  const existingLocalEntry = currentMonthData.entries?.find(
-    entry => entry.type === 'lead' && 
-             entry.value?.trim().toLowerCase() === accountNumber.toLowerCase()
-  );
   
-  if (existingLocalEntry) {
-    alert(`A lead with account number "${accountNumber}" already exists this month in local state`);
-    return;
-  }
 
   try {
     // Mark operation as active
     setActiveSaveOperations(prev => new Set(prev).add(operationId));
     console.log('Starting save operation:', operationId);
 
-    // Save lead to database
-    // Save lead to database - use appropriate method based on replacement toggle
-        // Save lead to database and capture the created row
+    
+    // Add loading state for all lead operations
+    setIsDbLoading(true);
+    setDbLoadingMessage(leadData.replaceToggle ? 'Creating replacement lead...' : 'Saving lead...');
+
+    // Save lead to database and capture the created row
     const newLead = await addLead({
       accountNumber: leadData.accountNumber,
       url: leadData.url,
@@ -748,25 +736,25 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     });
     console.log('Lead saved successfully:', newLead.id);
     
-       // Replacement flow: link the new lead to the marked original
+    // Replacement flow: link the new lead to the marked original
     if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
+      setDbLoadingMessage('Applying replacement...');
       await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
-      // Rotation update uses the known unitCount; guard in case addLead changes
       updateRotationAfterAssignment(
        assignedRepId,
         (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
       );
-      setShowLeadModal(false);
-      setSelectedCell(null);
     } else {
       // Normal lead path
-      setShowLeadModal(false);
-      setSelectedCell(null);
       updateRotationAfterAssignment(
         assignedRepId,
         (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
      );
     }
+    
+    // Database subscription will handle UI updates
+    setShowLeadModal(false);
+    setSelectedCell(null);
     
   } catch (error) {
     console.error('Failed to save lead:', error);
@@ -782,6 +770,10 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
       console.log('Completed save operation:', operationId);
       return newSet;
     });
+    
+    // Clear loading state
+    setIsDbLoading(false);
+    setDbLoadingMessage('');
   }
 };
 
@@ -838,18 +830,16 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
       if (entry.leadId) {
         try {
           await removeLead(entry.leadId);
-          // Database hook will handle UI updates via real-time subscription
+          // Database subscription will handle UI updates
           console.log('Lead deleted successfully with replacement handling');
         } catch (error) {
           console.error('Failed to delete lead from database:', error);
           alert('Failed to delete lead. Please try again.');
-          return;
         }
-        // Don't update local state for leads - let database hook handle it
-        return;
+        return; // Early return for leads
       }
       
-      // Only update local state for non-lead entries (skip, ooo, next)
+      // Only update local state for non-lead entries (skip, ooo, next) 
       const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
       
       const updatedData = {
