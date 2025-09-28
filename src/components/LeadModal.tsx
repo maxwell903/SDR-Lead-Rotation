@@ -233,6 +233,28 @@ const LeadModal: React.FC<LeadModalProps> = ({
     }
   }, [formData.propertyTypes, formData.unitCount, entryType, getFilteredEligibleReps, selectedCell, isEditing, getNextInRotation]);
 
+  // Get original lead info for replacement validation
+  const originalLeadInfo = useMemo(() => {
+    if (!replaceToggle || !originalLeadIdToReplace) return null;
+    
+    const option = replacementOptions.find(opt => opt.leadId === originalLeadIdToReplace);
+    if (option) {
+      return {
+        repId: option.repId,
+        repName: option.repName,
+        accountNumber: option.accountNumber
+      };
+    }
+    return null;
+  }, [replaceToggle, originalLeadIdToReplace, replacementOptions]);
+
+  // Lock assigned rep when replacing a lead
+  useEffect(() => {
+    if (originalLeadInfo && replaceToggle) {
+      setFormData(prev => ({ ...prev, assignedTo: originalLeadInfo.repId }));
+    }
+  }, [originalLeadInfo, replaceToggle]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -250,11 +272,23 @@ const LeadModal: React.FC<LeadModalProps> = ({
         alert('Unit count cannot be negative');
         return;
       }
+
+      if (replaceToggle && !originalLeadIdToReplace) {
+      alert('Please select a lead to replace')
+      return
+    }
+
     } else {
       if (!formData.assignedTo) {
         alert('Sales rep assignment is required');
         return;
       }
+    }
+
+    // Validation for replacement
+    if (replaceToggle && originalLeadInfo && formData.assignedTo !== originalLeadInfo.repId) {
+      alert(`Replacement lead must be assigned to ${originalLeadInfo.repName} (same as original lead)`);
+      return;
     }
 
     setIsSubmitting(true);
@@ -276,7 +310,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
         rotationTarget: entryType === 'lead'
           ? ((formData.unitCount ?? 0) >= 1000 ? 'over1k' : 'sub1k')
           : 'sub1k',
-        replaceLeadId: replaceToggle ? originalLeadIdToReplace : undefined,
+         replaceToggle,
+         originalLeadIdToReplace: replaceToggle ? originalLeadIdToReplace : undefined,
         id: editingEntry?.id
       };
 
@@ -569,7 +604,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
               <label className="block text-sm font-bold text-gray-700 mb-3">Assign Sales Rep *</label>
               <select
                 value={formData.assignedTo}
-                onChange={(e) => setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
+                 onChange={(e) => !replaceToggle && setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
                 className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
                 required
               >
@@ -583,6 +618,12 @@ const LeadModal: React.FC<LeadModalProps> = ({
                   );
                 })}
               </select>
+              {replaceToggle && originalLeadInfo && (
+                <div className="mt-2 text-xs text-amber-600 bg-amber-50 p-2 rounded">
+                  <strong>Replacement Rule:</strong> Must be assigned to {originalLeadInfo.repName} 
+                  (same as original lead: {originalLeadInfo.accountNumber})
+                </div>
+              )}
             </div>
 
             {/* 8. Date Picker */}

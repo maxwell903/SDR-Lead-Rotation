@@ -1,7 +1,8 @@
 import { supabase } from '../lib/supabase'
 import { logAction } from './actionTracker'
 import { ReplacementService } from './replacementService'
-import type { Lead } from '../types'
+import type { Lead, LeadEntry } from '../types'
+import { ReplacementState } from '../features/leadReplacement'
 
 // DB row shape (snake_case from your schema)
 type DBLeadRow = {
@@ -86,6 +87,66 @@ export async function createLead(
   return created
 }
 
+/** CREATE LRL lead with replacement relationship */
+export async function createLeadWithReplacement(
+  input: Omit<Lead, 'id'> & { id?: string },
+  originalLeadIdToReplace: string
+): Promise<Lead> {
+  const id = input.id ?? `lead_${Date.now()}`
+  const newLead: Lead = { ...input, id }
+  
+  // Create the new lead first
+  const { data, error } = await supabase
+    .from('leads')
+    .insert(leadToRow(newLead))
+    .select()
+    .single()
+  
+  if (error) throw error
+  
+  const created = rowToLead(data as DBLeadRow)
+  
+  // Apply the replacement relationship
+  try {
+    // Find the replacement mark for the original lead
+    const { data: markData, error: markError } = await supabase
+      .from('replacement_marks')
+      .select('id')
+      .eq('lead_id', originalLeadIdToReplace)
+      .single()
+    
+    if (markError) throw markError
+    if (!markData) throw new Error('Original lead not marked for replacement')
+    
+    // Update the replacement mark with the new lead ID
+    await ReplacementService.updateReplacementMark(markData.id, created.id)
+    
+    console.log('LRL replacement applied successfully:', {
+      originalLeadId: originalLeadIdToReplace,
+      newLeadId: created.id,
+      markId: markData.id
+    })
+    
+  } catch (replacementError) {
+    console.error('Error applying replacement:', replacementError)
+    // Rollback the lead creation if replacement fails
+    await supabase.from('leads').delete().eq('id', created.id)
+    throw new Error('Failed to create replacement relationship')
+  }
+  
+  
+    
+  
+  await logAction({
+    actionType: 'CREATE',
+    tableName: 'leads',
+    recordId: created.id,
+    newData: created
+  })
+  
+  return created
+}
+
 /** UPDATE one lead by id */
 export async function updateLead(id: string, patch: Partial<Lead>): Promise<Lead> {
   // Get old data for logging
@@ -118,6 +179,105 @@ export async function updateLead(id: string, patch: Partial<Lead>): Promise<Lead
   })
   
   return updated
+}
+
+
+
+// replacementService.ts - Enhanced replacement application
+export async function dbApplyReplacement(
+  originalLeadId: string, 
+  newLead: Lead
+): Promise<void> {
+  try {
+    // Find the replacement mark for the original lead
+    const { data: markData, error: markError } = await supabase
+      .from('replacement_marks')
+      .select('id')
+      .eq('lead_id', originalLeadId)
+      .single();
+    
+    if (markError) throw markError;
+    if (!markData) throw new Error('Original lead not marked for replacement');
+    
+    // Update the replacement mark with the new lead ID
+    await ReplacementService.updateReplacementMark(markData.id, newLead.id);
+    
+    console.log('LRL replacement applied successfully:', {
+      originalLeadId,
+      newLeadId: newLead.id,
+      markId: markData.id
+    });
+    
+  } catch (error) {
+    console.error('Error applying LRL replacement:', error);
+    throw error;
+  }
+}
+
+// Enhanced replacement state helper functions
+// Enhanced replacement state helper functions with hit calculation logic
+export function getLRLVisualState(entry: LeadEntry, replacementState: ReplacementState): {
+  isLRL: boolean;
+  isRLBR: boolean; 
+  isNeedsReplacement: boolean;
+  partnerLeadId?: string;
+  partnerAccountNumber?: string;
+  hitValue: number; // +1 for LRL and NL, 0 for RLBR and NA, -1 for MFR
+} {
+  if (!entry.leadId || !replacementState) {
+    // For non-lead entries or when no replacement state
+    if (entry.type === 'skip') {
+      return { isLRL: false, isRLBR: false, isNeedsReplacement: false, hitValue: 1 };
+    }
+    if (entry.type === 'lead') {
+      return { isLRL: false, isRLBR: false, isNeedsReplacement: false, hitValue: 1 }; // NL = +1
+    }
+    return { isLRL: false, isRLBR: false, isNeedsReplacement: false, hitValue: 0 }; // NA = 0
+  }
+  
+  // Check if this lead is marked for replacement
+  const replacementRecord = replacementState.byLeadId[entry.leadId];
+  if (replacementRecord) {
+    const isReplaced = Boolean(replacementRecord.replacedByLeadId);
+    return {
+      isLRL: false,
+      isRLBR: isReplaced,
+      isNeedsReplacement: !isReplaced,
+      partnerLeadId: replacementRecord.replacedByLeadId,
+      partnerAccountNumber: replacementRecord.accountNumber,
+      hitValue: isReplaced ? 0 : -1 // RLBR = 0 hits, MFR = -1 hits
+    };
+  }
+  
+  // Check if this lead is a replacement for another lead (LRL)
+  const originalRecord = Object.values(replacementState.byLeadId).find(
+    record => record.replacedByLeadId === entry.leadId
+  );
+  
+  if (originalRecord) {
+    return {
+      isLRL: true,
+      isRLBR: false,
+      isNeedsReplacement: false,
+      partnerLeadId: originalRecord.leadId,
+      partnerAccountNumber: originalRecord.accountNumber,
+      hitValue: 1 // LRL = +1 hit
+    };
+  }
+  
+  // Normal lead (NL)
+  return { 
+    isLRL: false, 
+    isRLBR: false, 
+    isNeedsReplacement: false, 
+    hitValue: 1 // NL = +1 hit
+  };
+}
+
+// Helper function to calculate hit value for rotation logic
+export function getEntryHitValue(entry: LeadEntry, replacementState: ReplacementState): number {
+  const visual = getLRLVisualState(entry, replacementState);
+  return visual.hitValue;
 }
 
 /** UPSERT many leads (insert/update by id) */

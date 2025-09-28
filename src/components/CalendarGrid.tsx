@@ -297,101 +297,98 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     }
   };
 
-  // NEW: replace default style when an entry participates in replacement flow
+ // NEW: replace default style when an entry participates in replacement flow
   const getEntryVisualClasses = (entry: LeadEntry): string => {
-  let baseClasses = "";
-  
-  if (entry.type === 'lead' && entry.leadId) {
-    const visual = getCalendarEntryVisual(entry, replacementState);
-    
-    if (visual.isOriginalMarkedOpen) {
-      // MFR - Marked for replacement (orange/yellow)
-      baseClasses = "bg-orange-100 border-orange-300 text-orange-800";
-    } else if (visual.isOriginalMarkedClosed) {
-      // RLBR - Replaced lead (grey, smaller)
-      baseClasses = "bg-gray-100 border-gray-300 text-gray-600 text-xs opacity-75 scale-90";
-    } else if (visual.isReplacementLead) {
-      // LRL - Lead replacing lead (green)
-      baseClasses = "bg-emerald-100 border-emerald-300 text-emerald-800 ring-1 ring-emerald-200";
-    } else {
-      // NL - Normal lead
-      baseClasses = "bg-white border-gray-200 text-gray-900";
+    if (entry.type === 'lead' && entry.leadId) {
+      const visual = getCalendarEntryVisual(entry, replacementState);
+      if (visual.isOriginalMarkedOpen)   return "bg-orange-100 border-orange-300 text-orange-800 hover:bg-orange-200 transition-all duration-200";
+      if (visual.isOriginalMarkedClosed) return "bg-gray-100 border-gray-300 text-gray-600 text-xs opacity-75 scale-90 hover:opacity-90 transition-all duration-200";
+      if (visual.isReplacementLead)      return "bg-emerald-100 border-emerald-300 text-emerald-800 ring-1 ring-emerald-200 font-medium hover:bg-emerald-200 transition-all duration-200";
+      return "bg-white border-gray-200 text-gray-900 hover:bg-gray-50 transition-colors duration-200";
     }
-  } else {
-    // Skip or other entry types
-    baseClasses = "bg-blue-50 border-blue-200 text-blue-800";
-  }
+    // Skip / ooo / next default
+    return "bg-blue-50 border-blue-200 text-blue-800";
+  };
+
+
   
-  return baseClasses;
-};
-
-
   // Function to render entry content with hyperlink support
   const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
-  if (entry.type === 'lead' && entry.leadId) {
-    const visual = getCalendarEntryVisual(entry, replacementState);
-    const partner = getReplacementPartnerLeadId(entry, replacementState);
-    
-    if (visual.isOriginalMarkedClosed && partner.partnerLeadId) {
-      // RLBR - Show replacement message
-      const partnerLead = leads.find(l => l.id === partner.partnerLeadId);
-      return (
-        <div className="space-y-1">
-          <div className="line-through text-xs">{entry.value}</div>
-          <div className="text-[10px] text-gray-500">
-            Replaced by {partnerLead?.accountNumber || 'N/A'}
-          </div>
-        </div>
-      );
-    } else if (visual.isReplacementLead && partner.partnerLeadId) {
-      // LRL - Show what it's replacing
-      const originalLead = leads.find(l => l.id === partner.partnerLeadId);
-      return (
-        <div className="space-y-1">
-          <div className="font-semibold">{entry.value}</div>
-          <div className="text-[10px] text-emerald-600">
-            Replaces {originalLead?.accountNumber || 'N/A'}
-          </div>
-        </div>
-      );
-    } else {
-      // Normal lead or MFR
-      return (
-        <div className="flex items-center justify-between">
-          <span className="truncate">{entry.value}</span>
-          {visual.isOriginalMarkedOpen && (
-            <ReplacementPill relation="needs" text="MFR" />
-          )}
-        </div>
-      );
-    }
-  }
-  
-  // Skip entries
-  return <span className="italic">Skip</span>;
-};
-
-const handleEntryHover = (entry: LeadEntry, isHovering: boolean) => {
-  if (entry.type === 'lead' && entry.leadId) {
-    const partner = getReplacementPartnerLeadId(entry, replacementState);
-    
-    if (partner.partnerLeadId) {
-      // Find and animate the partner entry
-      const partnerElement = document.querySelector(`[data-lead-id="${partner.partnerLeadId}"]`);
-      const currentElement = document.querySelector(`[data-lead-id="${entry.leadId}"]`);
+    if (entry.type === 'lead' && entry.leadId) {
+      const visualInfo = getCalendarEntryVisual(entry, replacementState);
+      const partner = getReplacementPartnerLeadId(entry, replacementState);
       
-      if (partnerElement && currentElement) {
-        if (isHovering) {
-          partnerElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-300');
-          currentElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-300');
-        } else {
-          partnerElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-300');
-          currentElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-300');
+      if (visualInfo.isOriginalMarkedClosed && partner.partnerLeadId) {
+        // RLBR - Original lead that has been replaced (grey, smaller, with message)
+        const partnerLead = leads.find(l => l.id === partner.partnerLeadId);
+        return (
+          <div className="space-y-1 scale-90 opacity-75">
+            <div className="line-through text-xs font-normal">{entry.value}</div>
+            <div className="text-[9px] text-gray-500 italic">
+              Replaced by {partnerLead?.accountNumber || 'N/A'}
+            </div>
+          </div>
+        );
+      } else if (visualInfo.isReplacementLead && partner.partnerLeadId) {
+        // LRL - Lead that is replacing another lead (enhanced display)
+        const originalLead = leads.find(l => l.id === partner.partnerLeadId);
+        return (
+          <div className="space-y-1">
+            <div className="font-semibold">{entry.value}</div>
+            <div className="text-[10px] text-emerald-600 font-medium">
+              Replaces {originalLead?.accountNumber || 'N/A'}
+            </div>
+          </div>
+        );
+      } else if (visualInfo.isOriginalMarkedOpen) {
+        // MFR - Marked for replacement but not yet replaced
+        return (
+          <div className="flex items-center justify-between">
+            <span className="truncate">{entry.value}</span>
+            <ReplacementPill relation="needs" text="MFR" />
+          </div>
+        );
+      } else {
+        // NL - Normal lead
+        return <span className="truncate">{entry.value}</span>;
+      }
+    }
+    
+ 
+    // Skip entries
+    return <span className="italic">Skip</span>;
+ };
+
+  // Keep this INSIDE the component
+  // Enhanced hover handler for LRL/RLBR partner animation
+  const handleEntryHover = (entry: LeadEntry, isHovering: boolean) => {
+    if (entry.type === 'lead' && entry.leadId) {
+      const partner = getReplacementPartnerLeadId(entry, replacementState);
+      if (partner.partnerLeadId) {
+        const partnerElement = document.querySelector(`[data-lead-id="${partner.partnerLeadId}"]`) as HTMLElement;
+        const currentElement = document.querySelector(`[data-lead-id="${entry.leadId}"]`) as HTMLElement;
+        
+        if (partnerElement && currentElement) {
+          if (isHovering) {
+            // Add enhanced animation classes for both elements
+            partnerElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
+            currentElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
+            // Add slight scale effect
+            partnerElement.style.transform = 'scale(1.02)';
+            currentElement.style.transform = 'scale(1.02)';
+          } else {
+            // Remove all animation classes
+            partnerElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
+            currentElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
+            // Reset scale
+            partnerElement.style.transform = '';
+            currentElement.style.transform = '';
+          }
         }
       }
     }
-  }
-};
+  };
+
 
   return (
     <div className="bg-white rounded-lg shadow-sm border" style={containerStyles}>
@@ -826,7 +823,10 @@ const handleEntryHover = (entry: LeadEntry, isHovering: boolean) => {
                           entries.map(entry => (
                             <div
                               key={entry.id}
+                              data-lead-id={entry.leadId}
                               className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
+                              onMouseEnter={() => handleEntryHover(entry, true)}
+                              onMouseLeave={() => handleEntryHover(entry, false)}
                             >
                               <div className="flex-1 min-w-0">
                                 {renderEntryContent(entry)}
@@ -851,7 +851,7 @@ const handleEntryHover = (entry: LeadEntry, isHovering: boolean) => {
           Unmark
         </button>
       );
-    } else if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen) {
+     } else if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen && !vis.isOriginalMarkedClosed) {
       return (
         <MarkForReplacementButton
           onClick={(e) => {

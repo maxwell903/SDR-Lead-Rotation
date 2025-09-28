@@ -46,6 +46,7 @@ export class ReplacementService {
   static async createReplacementMark(record: Omit<ReplacementRecord, 'markId' | 'markedAt' | 'isClosed'>): Promise<ReplacementRecord> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('User not authenticated');
+    
 
     const dbData = {
       ...appToDbFormat(record),
@@ -60,6 +61,13 @@ export class ReplacementService {
       .single();
 
     if (error) throw error;
+    
+    console.log('Replacement mark created successfully:', {
+      leadId: record.leadId,
+      repId: record.repId,
+      lane: record.lane
+     });
+    
     return dbToAppFormat(data);
   }
 
@@ -67,6 +75,12 @@ export class ReplacementService {
   static async updateReplacementMark(markId: string, replacedByLeadId: string): Promise<ReplacementRecord> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('User not authenticated');
+    console.log('Updating replacement mark:', {
+      markId,
+      replacedByLeadId,
+      userId: user.id
+    });
+
 
     const { data, error } = await supabase
       .from('replacement_marks')
@@ -94,6 +108,7 @@ export class ReplacementService {
 
   // Undo replacement (clear replaced_by_lead_id)
   static async undoReplacement(markId: string): Promise<ReplacementRecord> {
+    console.log('Undoing replacement for mark:', markId);
     const { data, error } = await supabase
       .from('replacement_marks')
       .update({ 
@@ -105,6 +120,7 @@ export class ReplacementService {
       .single();
 
     if (error) throw error;
+    console.log('Replacement undone successfully:', markId);
     return dbToAppFormat(data);
   }
 
@@ -116,6 +132,8 @@ export class ReplacementService {
       .order('marked_at', { ascending: true });
 
     if (error) throw error;
+    console.log('Loaded replacement marks:', data?.length || 0);
+
     return data.map(dbToAppFormat);
   }
 
@@ -128,6 +146,9 @@ export class ReplacementService {
       .single();
 
     if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "not found"
+      if (data) {
+        console.log('Found replacement mark for lead:', leadId, data);
+      }
     return data ? dbToAppFormat(data) : null;
   }
 
@@ -145,6 +166,13 @@ export class ReplacementService {
         }, 
         (payload) => {
           console.log('Real-time replacement mark change detected:', payload);
+          // Log more details about the change
+          console.log('Change details:', {
+            eventType: payload.eventType,
+            table: payload.table,
+            new: payload.new,
+            old: payload.old
+          });
           
           // Enhanced payload with event type
           const enhancedPayload = {

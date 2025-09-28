@@ -130,11 +130,24 @@ useEffect(() => {
         newLead.id
       );
 
-      // Update local state immediately
-      setReplacementState(prev => ({
-        ...prev,
-        byLeadId: { ...prev.byLeadId, [originalLeadId]: updatedRecord },
-      }));
+      setReplacementState(prev => {
+        // Remove from queue since it's now closed
+        const newQueue = prev.queue.filter(id => id !== originalLeadId);
+        
+        return {
+          byLeadId: { ...prev.byLeadId, [originalLeadId]: updatedRecord },
+          queue: newQueue,
+        };
+      });
+
+       setError(null);
+      
+      console.log('Replacement applied successfully:', {
+        originalLeadId,
+        newLeadId: newLead.id,
+        updatedRecord
+      });
+      
 
       setError(null);
     } catch (err) {

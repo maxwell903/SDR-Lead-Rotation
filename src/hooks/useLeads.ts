@@ -11,7 +11,9 @@ import {
   deleteLeadsWithReplacementHandling,
   checkLeadDeletionStatus,
   subscribeLeads,
+  createLeadWithReplacement,
 } from '../services/leadsService'
+import { supabase } from '../lib/supabase'
 
 type State = {
   leads: Lead[]
@@ -93,6 +95,42 @@ export function useLeads() {
       throw e
     }
   }
+
+  /** Create a lead with replacement functionality */
+  const addLeadWithReplacement = async (
+    lead: Omit<Lead, 'id'> & Partial<Pick<Lead, 'id'>>,
+    originalLeadIdToReplace: string
+  ) => {
+    try {
+      // Validate that the original lead is marked for replacement
+      const { data: markData, error: markError } = await supabase
+        .from('replacement_marks')
+        .select('*')
+        .eq('lead_id', originalLeadIdToReplace)
+        .single()
+      
+      if (markError || !markData) {
+        throw new Error('Original lead is not marked for replacement')
+      }
+      
+      if (markData.replaced_by_lead_id) {
+        throw new Error('Original lead already has a replacement')
+      }
+      
+      // Ensure assigned sales rep matches the original lead's rep
+      if (lead.assignedTo !== markData.rep_id) {
+        throw new Error('Assigned sales rep must match the original lead\'s rep')
+      }
+      
+      const created = await createLeadWithReplacement(lead, originalLeadIdToReplace)
+      setState(s => ({ ...s, leads: [created, ...s.leads] }))
+      return created
+    } catch (e: any) {
+      setState(s => ({ ...s, error: e?.message ?? 'Failed to create replacement lead' }))
+      throw e
+    }
+  }
+  
 
   /** Update a single lead by id - Enhanced for modal support */
   const updateLead = async (id: string, patch: Partial<Lead>) => {

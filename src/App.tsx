@@ -657,6 +657,24 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
   // Handle lead assignment with enhanced duplicate prevention
   let assignedRepId = leadData.assignedTo;
 
+ // Helper: look up a sales rep's display name by id (no hooks inside handlers)
+  const getSalesRepName = (repId: string) => {
+    const rep = salesReps.find(r => r.id === repId);
+    return rep ? rep.name : 'Unknown Rep';
+  };
+
+
+  // REPLACEMENT VALIDATION: If replacing a lead, ensure assigned rep matches original
+  if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
+    const originalAssignment = getReplacementAssignment(leadData.originalLeadIdToReplace);
+    if (originalAssignment && originalAssignment.repId !== assignedRepId) {
+      alert(`Replacement lead must be assigned to the same rep as the original lead: ${getSalesRepName(originalAssignment.repId)}`);
+      return;
+    }
+    assignedRepId = originalAssignment?.repId || assignedRepId;
+  }
+
+
   if (!assignedRepId) {
     assignedRepId = getNextInRotation(leadData);
   }
@@ -705,6 +723,8 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     console.log('Starting save operation:', operationId);
 
     // Save lead to database
+    // Save lead to database - use appropriate method based on replacement toggle
+        // Save lead to database and capture the created row
     const newLead = await addLead({
       accountNumber: leadData.accountNumber,
       url: leadData.url,
@@ -712,41 +732,36 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
       unitCount: leadData.unitCount,
       assignedTo: assignedRepId,
       date: new Date(),
-      comments: leadData.comments || [],
+     comments: leadData.comments || [],
       month: month + 1, // DB stores 1-12
       year
     });
-
     console.log('Lead saved successfully:', newLead.id);
-
-    // Create local entry for the calendar with guaranteed unique ID
-   
-
-    // Handle replacement logic
+    
+       // Replacement flow: link the new lead to the marked original
     if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-      try {
-        await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
-        console.log('Replacement applied successfully');
-        // Page should automatically refresh via real time subscription
-      } catch (error) {
-        console.error('Error applying replacement:', error);
-        alert('Failed to apply replacement');
-        return;
-      }
+      await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
+      // Rotation update uses the known unitCount; guard in case addLead changes
+      updateRotationAfterAssignment(
+       assignedRepId,
+        (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
+      );
+      setShowLeadModal(false);
+      setSelectedCell(null);
+    } else {
+      // Normal lead path
+      setShowLeadModal(false);
+      setSelectedCell(null);
+      updateRotationAfterAssignment(
+        assignedRepId,
+        (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
+     );
     }
-
-    // ENHANCED: Safely update local state with duplicate prevention
-    
-
-    setShowLeadModal(false);
-    setSelectedCell(null);
-    
-    // Update rotation state
-    updateRotationAfterAssignment(assignedRepId, newLead.unitCount >= 1000);
     
   } catch (error) {
     console.error('Failed to save lead:', error);
     alert('Failed to save lead. Please try again.');
+    
     // Don't close modal on error - let user try again
     throw error; // Re-throw so LeadModal knows there was an error
   } finally {

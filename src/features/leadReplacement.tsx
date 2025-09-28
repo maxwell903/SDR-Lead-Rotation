@@ -355,22 +355,24 @@ export function getCalendarEntryVisual(
   try {
     const rec = state.byLeadId[entry.leadId];
     if (rec) {
+      // This entry is an original lead that was marked for replacement
       return {
         isOriginalMarkedOpen: !rec.replacedByLeadId,
         isOriginalMarkedClosed: Boolean(rec.replacedByLeadId),
         isReplacementLead: false,
       };
     }
-    
+    const originalRecord = Object.values(state.byLeadId || {}).find((r) => 
     // Check if this is a replacement lead
-    const closed = Object.values(state.byLeadId || {}).find((r) => 
+    
       r && r.replacedByLeadId === entry.leadId
     );
     
-    if (closed) {
+    if (originalRecord) {
+    // This entry is a replacement lead (LRL)
       return { 
         isOriginalMarkedOpen: false, 
-        isOriginalMarkedClosed: true, 
+        isOriginalMarkedClosed: false, 
         isReplacementLead: true 
       };
     }
