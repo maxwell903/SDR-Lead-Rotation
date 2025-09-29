@@ -1035,14 +1035,32 @@ const handleDeleteLead = async (leadId: string) => {
 
 
   // UPDATED: Enhanced handleRemoveReplacementMark with immediate UI refresh
-  const handleRemoveReplacementMark = async (leadId: string) => {
-    try {
-      await dbRemoveLeadMark(leadId);
-      // Hit count is now created inside dbRemoveLeadMark (via replacementService)
-    } catch (e) {
-      console.error('Failed to unmark replacement or write hit:', e);
-    }
-  };
+  // Put near your other handlers in App.tsx
+const handleRemoveReplacementMark = async (leadId: string) => {
+  // Look up the replacement record first (this holds the *original* rep & lane)
+  const rec = replacementState.byLeadId?.[leadId];
+
+  // Fallback to the live lead row if needed (rare, but safe)
+  const lead = currentMonthData.leads.find(l => l.id === leadId);
+
+  const repId = rec?.repId ?? lead?.assignedTo;
+  const lane: 'sub1k' | '1kplus' = rec?.lane ?? getLaneFromUnits(lead?.unitCount);
+
+  // Only record a hit if we have enough context
+  if (repId && lane) {
+    await createHitCount({
+      repId,
+      hitType: 'MFR',        // use 'MFR' to keep semantics symmetric with mark/delete
+      hitValue: 1,           // UNMARK should add the point back
+      lane,
+      month: currentDate.getMonth() + 1,
+      year: currentDate.getFullYear(),
+    });
+  }
+
+  // Finally remove the mark
+  await dbRemoveLeadMark(leadId);
+};
 
   
 
