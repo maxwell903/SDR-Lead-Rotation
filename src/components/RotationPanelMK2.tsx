@@ -1,19 +1,21 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronRight, Minimize2, Maximize2, HelpCircle } from 'lucide-react';
-import { SalesRep, LeadEntry, Lead, RotationState } from '../types';
-import { ReplacementState } from '../features/leadReplacement';
-import { getNetHitCounts, subscribeHitCounts } from '../services/hitCountsService';
-import { filterOpenMarksByTime } from '../features/leadReplacement';
+import { ChevronDown, ChevronUp, Clock, ChevronRight, Minimize2, Maximize2, HelpCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { getNetHitCounts, subscribeHitCounts } from '../services/hitCountsService';
+import type { SalesRep } from '../types';
+
+interface ReplacementLead {
+  id: string;
+  repId: string;
+  repName: string;
+  leadId: string;
+  markedAt: Date;
+  lane: string;
+}
 
 interface RotationPanelMK2Props {
   salesReps: SalesRep[];
-  leadEntries: LeadEntry[];
-  leads: Lead[];
-  replacementState: ReplacementState;
-  rotationState: RotationState;
-  timeFilter: 'week' | 'month' | 'ytd' | 'alltime';
-  onUpdateRotation: (state: RotationState) => void;
+  onOpenAlgorithm?: () => void;
 }
 
 interface RotationItem {
@@ -27,21 +29,18 @@ interface RotationItem {
   hasOpenReplacements?: boolean;
 }
 
-const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
-  salesReps,
-  leadEntries,
-  leads,
-  replacementState,
-  rotationState,
-  timeFilter,
-  onUpdateRotation,
+const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({ 
+  salesReps, 
+  onOpenAlgorithm 
 }) => {
-  const [expandedSub1k, setExpandedSub1k] = useState(false);
-  const [expanded1kPlus, setExpanded1kPlus] = useState(false);
   const [hitsSub1k, setHitsSub1k] = useState<Map<string, number>>(new Map());
   const [hits1kPlus, setHits1kPlus] = useState<Map<string, number>>(new Map());
-  const [animatingItems, setAnimatingItems] = useState<Set<string>>(new Set());
-
+  const [replacementMarks, setReplacementMarks] = useState<ReplacementLead[]>([]);
+  const [oooReps, setOooReps] = useState<Set<string>>(new Set());
+  const [expandedSub1k, setExpandedSub1k] = useState(false);
+  const [expanded1kPlus, setExpanded1kPlus] = useState(false);
+  const [loading, setLoading] = useState(true);
+  
   const currentDate = new Date();
   const month = currentDate.getMonth() + 1;
   const year = currentDate.getFullYear();
@@ -58,30 +57,94 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
       console.error('Error loading hit counts:', error);
     }
   }, [month, year]);
+  
+  const loadReplacementMarks = useCallback(async () => {
+    try {
+      const { data: replacementData, error } = await supabase
+        .from('replacement_marks')
+        .select('id, lead_id, rep_id, lane, marked_at')
+        .is('replaced_by_lead_id', null)
+        .order('marked_at', { ascending: true });
+  
+      if (error) throw error;
+  
+      const replacements: ReplacementLead[] = (replacementData || []).map((mark: any) => {
+        const rep = salesReps.find(r => r.id === mark.rep_id);
+        return {
+          id: mark.id,
+          repId: mark.rep_id,
+          repName: rep?.name || 'Unknown',
+          leadId: mark.lead_id,
+          markedAt: new Date(mark.marked_at),
+          lane: mark.lane
+        };
+      });
+  
+      setReplacementMarks(replacements);
+    } catch (error) {
+      console.error('Error loading replacement marks:', error);
+    }
+  }, [salesReps]);
+  
+  const loadOOOStatus = useCallback(async () => {
+    try {
+      const today = new Date();
+      const { data: oooData, error } = await supabase
+        .from('lead_entries')
+        .select('rep_id')
+        .eq('type', 'ooo')
+        .eq('day', today.getDate())
+        .eq('month', today.getMonth() + 1)
+        .eq('year', today.getFullYear());
+  
+      if (error) throw error;
+  
+      const oooSet = new Set<string>();
+      oooData?.forEach((entry: any) => {
+        if (entry.rep_id) oooSet.add(entry.rep_id);
+      });
+      
+      setOooReps(oooSet);
+    } catch (error) {
+      console.error('Error loading OOO status:', error);
+    }
+  }, []);
 
-  // Initial load and realtime subscription
+  // Initial load
   useEffect(() => {
-    loadHitCounts();
+    const loadAllData = async () => {
+      setLoading(true);
+      await Promise.all([
+        loadHitCounts(),
+        loadReplacementMarks(),
+        loadOOOStatus()
+      ]);
+      setLoading(false);
+    };
     
+    loadAllData();
+  }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
+  
+  // Real-time subscriptions
+  useEffect(() => {
     // Subscribe to hit counts changes
     const unsubscribeHits = subscribeHitCounts(() => {
       loadHitCounts();
     });
-
-    // Subscribe to sales reps changes (for OOO status updates)
-    const repsChannel = supabase
-      .channel('sales_reps_rotation_changes')
+  
+    // Subscribe to replacement marks changes
+    const replacementChannel = supabase
+      .channel('replacement_marks_changes')
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
-        table: 'sales_reps' 
+        table: 'replacement_marks' 
       }, () => {
-        // Force re-render when rep status changes
-        loadHitCounts();
+        loadReplacementMarks();
       })
       .subscribe();
-
-    // Subscribe to lead entries changes (for immediate rotation updates)
+  
+    // Subscribe to lead entries changes (for OOO updates)
     const entriesChannel = supabase
       .channel('lead_entries_rotation_changes')
       .on('postgres_changes', { 
@@ -89,103 +152,110 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
         schema: 'public', 
         table: 'lead_entries' 
       }, () => {
+        loadOOOStatus();
+      })
+      .subscribe();
+  
+    // Subscribe to sales reps changes
+    const repsChannel = supabase
+      .channel('sales_reps_rotation_changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'sales_reps' 
+      }, () => {
         loadHitCounts();
       })
       .subscribe();
-
+  
     return () => {
       unsubscribeHits();
-      supabase.removeChannel(repsChannel);
+      supabase.removeChannel(replacementChannel);
       supabase.removeChannel(entriesChannel);
+      supabase.removeChannel(repsChannel);
     };
-  }, [loadHitCounts]);
+  }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
 
-  // Get base orders from rotation state, filtering out OOO reps
-  const getActiveReps = useCallback((baseOrder: string[]) => {
-    return baseOrder.filter(repId => {
-      const rep = salesReps.find(r => r.id === repId);
-      return rep && rep.status === 'active';
-    });
-  }, [salesReps]);
-
-  const baseOrderSub1k = getActiveReps(rotationState.normalRotationSub1k || []);
-  const baseOrder1kPlus = getActiveReps(rotationState.normalRotationOver1k || []);
-
-  // Generate rotation sequence based on hits
-  // This creates the sequence showing how reps cycle through the rotation
-  // Each hit moves a rep back one full cycle through the rotation
-  // The sequence continues until we complete one full cycle with the original order
+  // Get active reps for a lane (filtering out inactive and OOO)
+  const getActiveRepsForLane = useCallback((lane: 'sub1k' | '1kplus'): SalesRep[] => {
+    let reps = salesReps.filter(rep => rep.status === 'active');
+    
+    // Filter for 1k+ capable reps only for 1kplus lane
+    if (lane === '1kplus') {
+      reps = reps.filter(rep => {
+        const params = rep.parameters as any;
+        return params?.canHandle1kPlus === true;
+      });
+    }
+    
+    // Exclude OOO reps
+    reps = reps.filter(rep => !oooReps.has(rep.id));
+    
+    return reps;
+  }, [salesReps, oooReps]);
+  
+  // Get original order for a lane
+  const getOriginalOrder = useCallback((lane: 'sub1k' | '1kplus'): string[] => {
+    const reps = getActiveRepsForLane(lane);
+    const orderField = lane === 'sub1k' ? 'sub1kOrder' : 'over1kOrder';
+    
+    return reps
+      .sort((a, b) => {
+        const orderA = (a as any)[orderField] || 0;
+        const orderB = (b as any)[orderField] || 0;
+        return orderA - orderB;
+      })
+      .map(r => r.id);
+  }, [getActiveRepsForLane]);
+  
+  // Generate rotation sequence (for expanded view)
   const generateRotationSequence = useCallback((
-    baseOrder: string[], 
+    baseOrder: string[],
     hitCounts: Map<string, number>
   ): Array<{ position: number; repId: string }> => {
     if (baseOrder.length === 0) return [];
-
+  
     const sequence: Array<{ position: number; repId: string }> = [];
-    const rotationSize = baseOrder.length;
+    const repHits = baseOrder.map(repId => ({
+      repId,
+      hits: hitCounts.get(repId) || 0
+    }));
+  
     let position = 1;
-    
-    // Track how many times each rep has appeared in the sequence
-    const appearances = new Map<string, number>();
-    baseOrder.forEach(repId => appearances.set(repId, 0));
-
-    // Generate sequence until we complete one full original order cycle
-    // This means each rep appears the same number of times
     let completedOriginalCycle = false;
-    let iterations = 0;
-    const maxIterations = rotationSize * 50; // Safety limit
-
-    while (!completedOriginalCycle && iterations < maxIterations) {
-      iterations++;
-      
-      // Go through each position in the base order
-      for (let i = 0; i < rotationSize; i++) {
-        const repId = baseOrder[i];
-        const hits = hitCounts.get(repId) || 0;
-        const currentAppearances = appearances.get(repId) || 0;
-
-        // A rep can appear if they've appeared fewer times than their hit count
-        // This effectively pushes them back in the rotation
-        if (currentAppearances >= hits) {
-          sequence.push({ position, repId });
-          appearances.set(repId, currentAppearances + 1);
-          position++;
+  
+    while (!completedOriginalCycle && sequence.length < 1000) {
+      // Find rep with lowest hits
+      const sortedReps = [...repHits].sort((a, b) => {
+        if (a.hits !== b.hits) return a.hits - b.hits;
+        return baseOrder.indexOf(a.repId) - baseOrder.indexOf(b.repId);
+      });
+  
+      const nextRep = sortedReps[0];
+      sequence.push({ position: position++, repId: nextRep.repId });
+      nextRep.hits += 1;
+  
+      // Check if we've completed a cycle matching original order
+      if (sequence.length >= baseOrder.length) {
+        const lastSegment = sequence.slice(-baseOrder.length);
+        const matchesOriginal = lastSegment.every(
+          (item, idx) => item.repId === baseOrder[idx]
+        );
+        if (matchesOriginal) {
+          completedOriginalCycle = true;
         }
       }
-
-      // Check if all reps have appeared the same number of times
-      // This indicates we've completed a full cycle in original order
-      const allAtSameAppearances = Array.from(appearances.values()).every(
-        (count, idx, arr) => count === arr[0]
-      );
-      
-      if (allAtSameAppearances && appearances.get(baseOrder[0])! > 0) {
-        completedOriginalCycle = true;
-      }
     }
-
+  
     return sequence;
   }, []);
-
-  // Get open replacement order (FIFO by timestamp)
-  const getOpenRepOrder = useCallback((lane: 'sub1k' | '1kplus'): string[] => {
-    try {
-      const open = filterOpenMarksByTime(replacementState, lane as any, timeFilter as any, currentDate);
-      const repOrder: string[] = [];
-      
-      open.sort((a, b) => a.markedAt - b.markedAt);
-      
-      for (const rec of open) {
-        if (rec.repId) {
-          repOrder.push(rec.repId);
-        }
-      }
-      return repOrder;
-    } catch (error) {
-      console.error('Error getting open rep order:', error);
-      return [];
-    }
-  }, [replacementState, timeFilter, currentDate]);
+  
+  // Get replacement order for a lane
+  const getReplacementOrder = useCallback((lane: 'sub1k' | '1kplus'): ReplacementLead[] => {
+    return replacementMarks
+      .filter(mark => mark.lane === lane)
+      .sort((a, b) => a.markedAt.getTime() - b.markedAt.getTime());
+  }, [replacementMarks]);
 
   // Generate collapsed view items
   const generateCollapsedView = useCallback((
@@ -194,7 +264,7 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
     lane: 'sub1k' | '1kplus'
   ): RotationItem[] => {
     if (baseOrder.length === 0) return [];
-
+  
     const sequence = generateRotationSequence(baseOrder, hitCounts);
     const seenReps = new Set<string>();
     const items: RotationItem[] = [];
@@ -217,15 +287,15 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
       }
     }
     
-    // Apply replacement overlay
-    const openOrder = getOpenRepOrder(lane);
-    if (openOrder.length > 0) {
-      const repWithReplacements = new Set(openOrder);
+    // Overlay replacement order
+    const replacements = getReplacementOrder(lane);
+    if (replacements.length > 0) {
+      const repWithReplacements = new Set(replacements.map(r => r.repId));
       return items.map((item, index) => ({
         ...item,
         hasOpenReplacements: repWithReplacements.has(item.repId),
         displayPosition: repWithReplacements.has(item.repId) 
-          ? openOrder.indexOf(item.repId) + 1
+          ? replacements.findIndex(r => r.repId === item.repId) + 1
           : item.nextPosition,
         isNext: index === 0
       })).sort((a, b) => {
@@ -237,8 +307,8 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
     }
     
     return items.sort((a, b) => a.nextPosition - b.nextPosition);
-  }, [generateRotationSequence, salesReps, getOpenRepOrder]);
-
+  }, [generateRotationSequence, salesReps, getReplacementOrder]);
+  
   // Generate expanded view items
   const generateExpandedView = useCallback((
     baseOrder: string[],
@@ -252,17 +322,17 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
     if (baseOrder.length === 0) {
       return { replacementQueue: [], currentOrder: [], originalOrder: [] };
     }
-
-    // Get replacement queue (FIFO order)
-    const openOrder = getOpenRepOrder(lane);
-    const replacementQueue: RotationItem[] = openOrder.map((repId, idx) => {
-      const rep = salesReps.find(r => r.id === repId);
-      const originalPosition = baseOrder.indexOf(repId) + 1;
-      const hits = hitCounts.get(repId) || 0;
+  
+    // Generate replacement queue
+    const replacements = getReplacementOrder(lane);
+    const replacementQueue: RotationItem[] = replacements.map((mark, idx) => {
+      const rep = salesReps.find(r => r.id === mark.repId);
+      const originalPosition = baseOrder.indexOf(mark.repId) + 1;
+      const hits = hitCounts.get(mark.repId) || 0;
       
       return {
-        repId,
-        name: rep?.name || repId,
+        repId: mark.repId,
+        name: rep?.name || mark.repId,
         originalPosition,
         hits,
         nextPosition: idx + 1,
@@ -271,7 +341,7 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
         hasOpenReplacements: true
       };
     });
-
+  
     // Generate current order sequence
     const sequence = generateRotationSequence(baseOrder, hitCounts);
     const currentOrder: RotationItem[] = sequence.map((seqItem, idx) => {
@@ -290,7 +360,7 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
         hasOpenReplacements: false
       };
     });
-
+  
     // Generate original order (reference section)
     const originalOrder: RotationItem[] = baseOrder.map((repId, idx) => {
       const rep = salesReps.find(r => r.id === repId);
@@ -307,77 +377,44 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
         hasOpenReplacements: false
       };
     });
-
+  
     return { replacementQueue, currentOrder, originalOrder };
-  }, [generateRotationSequence, salesReps, getOpenRepOrder]);
+  }, [generateRotationSequence, salesReps, getReplacementOrder]);
 
-  // Memoize rotation items
+  // Compute orders for sub1k
+  const baseOrderSub1k = useMemo(() => getOriginalOrder('sub1k'), [getOriginalOrder]);
   const sub1kCollapsed = useMemo(
     () => generateCollapsedView(baseOrderSub1k, hitsSub1k, 'sub1k'),
     [generateCollapsedView, baseOrderSub1k, hitsSub1k]
   );
-
   const sub1kExpanded = useMemo(
     () => generateExpandedView(baseOrderSub1k, hitsSub1k, 'sub1k'),
     [generateExpandedView, baseOrderSub1k, hitsSub1k]
   );
-
+  
+  // Compute orders for 1k+
+  const baseOrder1kPlus = useMemo(() => getOriginalOrder('1kplus'), [getOriginalOrder]);
   const over1kCollapsed = useMemo(
     () => generateCollapsedView(baseOrder1kPlus, hits1kPlus, '1kplus'),
     [generateCollapsedView, baseOrder1kPlus, hits1kPlus]
   );
-
   const over1kExpanded = useMemo(
     () => generateExpandedView(baseOrder1kPlus, hits1kPlus, '1kplus'),
     [generateExpandedView, baseOrder1kPlus, hits1kPlus]
   );
 
-  // Trigger animations when items change positions
-  useEffect(() => {
-    const allRepIds = new Set([
-      ...sub1kCollapsed.map(i => i.repId),
-      ...over1kCollapsed.map(i => i.repId)
-    ]);
-    
-    setAnimatingItems(allRepIds);
-    const timer = setTimeout(() => setAnimatingItems(new Set()), 500);
-    
-    return () => clearTimeout(timer);
-  }, [sub1kCollapsed, over1kCollapsed]);
-
-  // Update rotation state when next person changes
-  useEffect(() => {
-    const nextSub1k = sub1kCollapsed.find(item => item.isNext)?.repId || '';
-    const next1kPlus = over1kCollapsed.find(item => item.isNext)?.repId || '';
-
-    if (nextSub1k !== rotationState.nextSub1k || next1kPlus !== rotationState.next1kPlus) {
-      onUpdateRotation({
-        ...rotationState,
-        nextSub1k,
-        next1kPlus
-      });
-    }
-  }, [sub1kCollapsed, over1kCollapsed, rotationState, onUpdateRotation]);
-
-  // Render rotation item with animation
-  const renderRotationItem = (item: RotationItem, showHits: boolean = false) => {
-    const isAnimating = animatingItems.has(item.repId);
-    
+  // Render functions
+  const renderRotationItem = (item: RotationItem, showHits: boolean = true) => {
     return (
-      <div 
+      <div
         key={`${item.repId}-${item.displayPosition || item.nextPosition}`}
-        className={`flex items-center justify-between px-3 py-2 text-sm rounded border transition-all duration-300 ${
-          isAnimating ? 'scale-105' : 'scale-100'
-        } ${
+        className={`flex items-center justify-between py-2 px-3 rounded transition-all ${
           item.hasOpenReplacements 
-            ? 'bg-orange-50 border-orange-200 text-orange-800'
+            ? 'bg-orange-50 border border-orange-200' 
             : item.isNext 
-              ? 'bg-blue-50 border-blue-200 text-blue-800' 
-              : 'bg-white border-gray-200 text-gray-800'
+              ? 'bg-blue-50 border border-blue-200 font-semibold' 
+              : 'hover:bg-gray-50'
         }`}
-        style={{
-          transform: isAnimating ? 'translateX(4px)' : 'translateX(0)',
-        }}
       >
         <div className="flex items-center space-x-3">
           <span className={`font-medium ${
@@ -412,8 +449,7 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
       </div>
     );
   };
-
-  // Render rotation lane
+  
   const renderRotationLane = (
     title: string,
     collapsedItems: RotationItem[],
@@ -423,6 +459,19 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
     lane: 'sub1k' | '1kplus'
   ) => {
     const hasReplacements = expandedData.replacementQueue.length > 0;
+    
+    // Check if all reps are OOO for this lane
+    const allOOO = collapsedItems.length === 0 && expandedData.currentOrder.length === 0;
+    
+    if (allOOO) {
+      return (
+        <div className="bg-gray-100 border-2 border-gray-300 rounded-lg p-6 text-center">
+          <Clock className="mx-auto mb-2 text-gray-500" size={32} />
+          <h3 className="font-semibold text-gray-700 mb-1">{title}</h3>
+          <p className="text-gray-600">We are closed</p>
+        </div>
+      );
+    }
     
     return (
       <div className="space-y-2">
@@ -450,21 +499,11 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
             <span>{expanded ? 'Collapse' : 'Expand'}</span>
           </button>
         </div>
-
+  
         <div className="rounded-lg border bg-white divide-y">
           {expanded ? (
             <>
-              {/* Replacement Queue Section */}
-              {hasReplacements && (
-                <div className="p-3 bg-orange-50">
-                  <div className="text-xs font-semibold text-orange-800 mb-2">
-                    REPLACEMENT ORDER
-                  </div>
-                  <div className="space-y-1">
-                    {expandedData.replacementQueue.map(item => renderRotationItem(item, false))}
-                  </div>
-                </div>
-              )}
+              
               
               {/* Current Order Section */}
               <div className="p-3">
@@ -496,73 +535,53 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
     );
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+  
   return (
     <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900">Rotation Panel</h3>
-        <div className="text-xs text-gray-600">
-          Tracking: {timeFilter === 'week' ? 'This Week' : timeFilter === 'month' ? 'This Month' : timeFilter === 'ytd' ? 'Year to Date' : 'All Time'}
-        </div>
-      </div>
-
-      {/* OOO Status Indicator */}
-      {(() => {
-        const oooReps = salesReps.filter(rep => rep.status === 'ooo');
-        const allSub1kOOO = baseOrderSub1k.length === 0 && rotationState.normalRotationSub1k.length > 0;
-        const all1kPlusOOO = baseOrder1kPlus.length === 0 && rotationState.normalRotationOver1k.length > 0;
-        
-        if (oooReps.length > 0) {
-          return (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-              <div className="flex items-center space-x-2 text-sm">
-                <span className="font-semibold text-yellow-800">Out of Office:</span>
-                <span className="text-yellow-700">
-                  {oooReps.map(rep => rep.name).join(', ')}
-                </span>
-              </div>
-              {(allSub1kOOO || all1kPlusOOO) && (
-                <div className="mt-2 text-xs text-yellow-800 font-medium">
-                  ⚠️ {allSub1kOOO && all1kPlusOOO ? 'All rotations' : allSub1kOOO ? 'Sub 1K rotation' : '1K+ rotation'} temporarily closed (all reps OOO)
-                </div>
-              )}
-            </div>
-          );
-        }
-        return null;
-      })()}
-
-      {/* Show "We are closed" message when all reps in a rotation are OOO */}
-      <div className="space-y-4">
-        {baseOrderSub1k.length === 0 && rotationState.normalRotationSub1k.length > 0 ? (
-          <div className="bg-yellow-100 border-2 border-yellow-300 rounded-lg p-6 text-center">
-            <h4 className="font-semibold text-yellow-900 text-sm mb-1">Sub 1K Rotation</h4>
-            <p className="text-yellow-800 text-sm">We are closed (all reps out of office)</p>
-          </div>
-        ) : (
-          renderRotationLane(
-            'Sub 1K Rotation',
-            sub1kCollapsed,
-            sub1kExpanded,
-            expandedSub1k,
-            () => setExpandedSub1k(!expandedSub1k),
-            'sub1k'
-          )
+        {onOpenAlgorithm && (
+          <button
+            type="button"
+            onClick={onOpenAlgorithm}
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+          >
+            <span>Rotation Algorithm</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
         )}
-        
-        {baseOrder1kPlus.length === 0 && rotationState.normalRotationOver1k.length > 0 ? (
-          <div className="bg-yellow-100 border-2 border-yellow-300 rounded-lg p-6 text-center">
-            <h4 className="font-semibold text-yellow-900 text-sm mb-1">1K+ Rotation</h4>
-            <p className="text-yellow-800 text-sm">We are closed (all reps out of office)</p>
-          </div>
-        ) : (
-          renderRotationLane(
-            '1K+ Rotation',
-            over1kCollapsed,
-            over1kExpanded,
-            expanded1kPlus,
-            () => setExpanded1kPlus(!expanded1kPlus),
-            '1kplus'
-          )
+      </div>
+  
+      {/* Sub 1k Rotation */}
+      <div className="space-y-2">
+        <h4 className="text-md font-semibold text-gray-800">Sub $1K Rotation</h4>
+        {renderRotationLane(
+          'Current Order',
+          sub1kCollapsed,
+          sub1kExpanded,
+          expandedSub1k,
+          () => setExpandedSub1k(!expandedSub1k),
+          'sub1k'
+        )}
+      </div>
+  
+      {/* 1k+ Rotation */}
+      <div className="space-y-2">
+        <h4 className="text-md font-semibold text-gray-800">$1K+ Rotation</h4>
+        {renderRotationLane(
+          'Current Order',
+          over1kCollapsed,
+          over1kExpanded,
+          expanded1kPlus,
+          () => setExpanded1kPlus(!expanded1kPlus),
+          '1kplus'
         )}
       </div>
     </div>

@@ -5,6 +5,7 @@ import {
   buildReplacementOptions,
 } from '../features/leadReplacement';
 import { SalesRep, Lead, RotationState, MonthData } from '../types';
+import { supabase } from '../lib/supabase';
 
 interface EditLeadModalProps {
   onClose: () => void;
@@ -219,6 +220,8 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const oldAssignedTo = editingLead.assignedTo;
+
     if (!formData.accountNumber.trim()) {
       alert('Account number is required');
       return;
@@ -230,6 +233,18 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
         if (formData.unitCount !== null && formData.unitCount < 0) {
       alert('Unit count cannot be negative');
       return;
+    }
+
+    // Validation: If this is a replacement lead (LRL), ensure it matches unit tier
+    if (isReplacementLead && originalLeadRecord && formData.unitCount !== null) {
+      // Get leads from monthlyData
+      const currentMonthKey = `${editingLead.year}-${editingLead.month}`;
+      const currentMonthLeads = monthlyData[currentMonthKey]?.leads || [];
+      const originalLead = currentMonthLeads.find(l => l.id === originalLeadRecord.leadId);
+      if (originalLead && originalLead.unitCount >= 1000 && formData.unitCount < 1000) {
+        alert('Cannot change a 1K+ replacement lead to under 1000 units');
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -254,6 +269,23 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
         year: formData.date.getFullYear(),
       };
       await onUpdate(updateData);
+
+      // If assigned_to changed, update the replacement_marks table
+      if (formData.assignedTo !== oldAssignedTo) {
+        const { error: markUpdateError } = await supabase
+          .from('replacement_marks')
+          .update({ 
+            rep_id: formData.assignedTo,
+            updated_at: new Date().toISOString()
+          })
+          .eq('lead_id', editingLead.id)
+        
+        if (markUpdateError) {
+          console.error('Failed to update replacement mark rep_id:', markUpdateError)
+        } else {
+          console.log(`Updated replacement mark rep_id from ${oldAssignedTo} to ${formData.assignedTo}`)
+        }
+      }
       onClose();
     } catch (error) {
       console.error('Error updating lead:', error);

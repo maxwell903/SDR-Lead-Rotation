@@ -172,6 +172,39 @@ export async function updateLead(id: string, patch: Partial<Lead>): Promise<Lead
     .select('*')
     .eq('id', id)
     .single()
+
+  if (!oldData) throw new Error('Lead not found')
+  
+  const oldLead = rowToLead(oldData as DBLeadRow)
+  
+  // Check if assigned_to is changing (rep transfer)
+  const isRepTransfer = patch.assignedTo && patch.assignedTo !== oldLead.assignedTo
+  
+  // Determine lead type before the update
+  let leadType: 'NL' | 'MFR' | 'LRL' = 'NL'
+  
+  if (isRepTransfer) {
+    // Check if this lead is marked for replacement
+    const { data: markData } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .eq('lead_id', id)
+      .maybeSingle()
+    
+    // Check if this lead is a replacement for another
+    const { data: replacementData } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .eq('replaced_by_lead_id', id)
+      .maybeSingle()
+    
+    if (markData && !markData.replaced_by_lead_id) {
+      leadType = 'MFR'
+    } else if (replacementData) {
+      leadType = 'LRL'
+    }
+  }
+ 
   
     // Never allow id to be updated in the payload
   const payload = { ...leadToRow(patch as Lead) } as any;
@@ -186,6 +219,45 @@ export async function updateLead(id: string, patch: Partial<Lead>): Promise<Lead
   if (error) throw error
   
   const updated = rowToLead(data as DBLeadRow)
+  // Handle rep transfer with hit compensation
+  if (isRepTransfer) {
+    const now = new Date()
+    const oldRepId = oldLead.assignedTo
+    const newRepId = updated.assignedTo
+    const units = updated.unitCount ?? 0
+    const lane: 'sub1k' | '1kplus' = units >= 1000 ? '1kplus' : 'sub1k'
+    
+    console.log(`Transferring lead ${id} from ${oldRepId} to ${newRepId} (type: ${leadType})`)
+    
+    try {
+      // Remove hit from old rep
+      const oldHitValue = leadType === 'MFR' ? -1 : leadType === 'LRL' ? 1 : 1
+      await createHitCount({
+        repId: oldRepId,
+        leadEntryId: id,
+        hitType: leadType,
+        hitValue: -oldHitValue, // Negate the original value
+        lane,
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+      })
+      
+      // Add hit to new rep
+      await createHitCount({
+        repId: newRepId,
+        leadEntryId: id,
+        hitType: leadType,
+        hitValue: oldHitValue, // Original value
+        lane,
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+      })
+      
+      console.log(`Successfully transferred ${leadType} hit from ${oldRepId} to ${newRepId}`)
+    } catch (hitError) {
+      console.error('Failed to write hit compensation for rep transfer:', hitError)
+    }
+  }
   
   await logAction({
     actionType: 'UPDATE',
@@ -326,10 +398,10 @@ export async function upsertLeads(leads: Lead[]): Promise<Lead[]> {
 
 /** ENHANCED DELETE with replacement cascade handling */
 export async function deleteLeadWithReplacementHandling(leadId: string): Promise<void> {
-  console.log(`Starting enhanced deletion for lead: ${leadId}`)
-  
   try {
-    // Step 1: Check if this lead is a replacement for another lead
+    console.log(`Starting enhanced delete for lead: ${leadId}`)
+    
+    // Step 1: Check if this lead IS a replacement for another lead (LRL)
     const { data: isReplacementData, error: isReplacementError } = await supabase
       .from('replacement_marks')
       .select('*')
@@ -338,12 +410,22 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
     
     if (isReplacementError) throw isReplacementError
     
+    // If this lead is an LRL replacement, undo the replacement mark
     if (isReplacementData) {
-      console.log(`Lead ${leadId} is a replacement lead, reopening original mark: ${isReplacementData.lead_id}`)
-      // This lead replaced another - reopen the original mark
-      await ReplacementService.undoReplacement(isReplacementData.id)
+      console.log(`Lead ${leadId} is an LRL replacement, undoing replacement mark`)
+      
+      // Undo the replacement (clears replaced_by_lead_id)
+      const { error: undoError } = await supabase
+        .from('replacement_marks')
+        .update({ 
+          replaced_by_lead_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', isReplacementData.id)
+      
+      if (undoError) throw undoError
+      console.log(`Replacement mark ${isReplacementData.id} has been reopened (MFR status restored)`)
     }
-    
     
     // Step 2: Check if this lead has a replacement
     const { data: hasReplacementData, error: hasReplacementError } = await supabase
@@ -351,6 +433,8 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
       .select('*')
       .eq('lead_id', leadId)
       .maybeSingle()
+    
+    // ... rest of the function continues as before
     
     if (hasReplacementError) throw hasReplacementError
     

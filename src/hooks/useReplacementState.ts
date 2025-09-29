@@ -76,42 +76,50 @@ useEffect(() => {
   };
 }, [loadReplacementMarks]);
 
-  // Mark lead for replacement (save to database)
-  const markLeadForReplacement = useCallback(async (lead: Lead) => {
-    try {
-      // Check if already marked
-      if (replacementState.byLeadId[lead.id]) {
-        console.log('Lead already marked for replacement:', lead.id);
-        return;
-      }
+  // In useReplacementState.ts - markLeadForReplacement function
 
-      // Determine lane based on unit count
-      const lane = lead.unitCount >= 1000 ? 'over1k' : 'sub1k';
-
-      const record = await ReplacementService.createReplacementMark({
-        leadId: lead.id,
-        repId: lead.assignedTo,
-        lane: lane as any,
-        accountNumber: lead.accountNumber || '',
-        url: lead.url || '',
-        replacedByLeadId: undefined,
-        replacedAt: undefined,
-      });
-
-      // Update local state immediately for better UX
-      setReplacementState(prev => ({
-        byLeadId: { ...prev.byLeadId, [lead.id]: record },
-        queue: [...prev.queue, lead.id],
-      }));
-
-      setError(null);
-      
-    } catch (err) {
-      console.error('Error marking lead for replacement:', err);
-      setError(err instanceof Error ? err.message : 'Failed to mark lead for replacement');
-      await loadReplacementMarks();
+const markLeadForReplacement = useCallback(async (lead: Lead) => {
+  try {
+    // Check if already marked
+    if (replacementState.byLeadId[lead.id]) {
+      console.log('Lead already marked for replacement:', lead.id);
+      return;
     }
-  }, [replacementState, loadReplacementMarks]);
+
+    // CRITICAL: Determine lane based on unit count - must be '1kplus' not 'over1k'
+    const lane = (lead.unitCount ?? 0) >= 1000 ? '1kplus' : 'sub1k';
+    
+    console.log('Marking lead for replacement:', {
+      leadId: lead.id,
+      unitCount: lead.unitCount,
+      lane: lane,  // Debug: verify this shows '1kplus' for 1k+ leads
+      repId: lead.assignedTo
+    });
+
+    const record = await ReplacementService.createReplacementMark({
+      leadId: lead.id,
+      repId: lead.assignedTo,
+      lane: lane,  // Pass the correct lane
+      accountNumber: lead.accountNumber || '',
+      url: lead.url || '',
+      replacedByLeadId: undefined,
+      replacedAt: undefined,
+    });
+
+    // Update local state immediately for better UX
+    setReplacementState(prev => ({
+      byLeadId: { ...prev.byLeadId, [lead.id]: record },
+      queue: [...prev.queue, lead.id],
+    }));
+
+    setError(null);
+    
+  } catch (err) {
+    console.error('Error marking lead for replacement:', err);
+    setError(err instanceof Error ? err.message : 'Failed to mark lead for replacement');
+    await loadReplacementMarks();
+  }
+}, [replacementState, loadReplacementMarks]);
 
   // Apply replacement (save to database)
   const applyReplacement = useCallback(async (originalLeadId: string, newLead: Lead) => {

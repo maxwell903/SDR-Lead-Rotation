@@ -103,7 +103,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
   // Get replacement options for the dropdown
   const replacementOptions = useMemo(() => {
     return buildReplacementOptions(monthlyData, replacementState, salesReps);
-  }, [replacementState, salesReps]);
+    }, [monthlyData, replacementState, salesReps]);
 
   // Date formatting helpers
   const formatDateDisplay = (date: Date) => {
@@ -273,6 +273,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
         return;
       }
 
+    
+
       if (replaceToggle && !originalLeadIdToReplace) {
       alert('Please select a lead to replace')
       return
@@ -290,6 +292,17 @@ const LeadModal: React.FC<LeadModalProps> = ({
       alert(`Replacement lead must be assigned to ${originalLeadInfo.repName} (same as original lead)`);
       return;
     }
+
+    // Validation: Cannot replace 1k+ lead with sub-1k lead
+    if (replaceToggle && originalLeadInfo && formData.unitCount !== null) {
+      const originalLead = leads.find(l => l.id === originalLeadIdToReplace);
+      if (originalLead && originalLead.unitCount >= 1000 && formData.unitCount < 1000) {
+        alert('Cannot replace a 1K+ lead with a lead under 1000 units');
+        return;
+      }
+    }
+
+    
 
     setIsSubmitting(true);
     

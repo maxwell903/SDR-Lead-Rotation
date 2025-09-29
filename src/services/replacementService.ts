@@ -45,48 +45,49 @@ const appToDbFormat = (appRecord: Partial<ReplacementRecord>) => ({
 export class ReplacementService {
   // Create new replacement mark
   static async createReplacementMark(record: Omit<ReplacementRecord, 'markId' | 'markedAt' | 'isClosed'>): Promise<ReplacementRecord> {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('User not authenticated');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
 
-    const dbData = {
-      ...appToDbFormat(record),
-      marked_at: new Date().toISOString(),
-      created_by: user.id,
-    };
+  console.log('Creating replacement mark with lane:', record.lane); // Debug log
 
-    const { data, error } = await supabase
-      .from('replacement_marks')
-      .insert(dbData)
-      .select()
-      .single();
+  const dbData = {
+    lead_id: record.leadId,
+    rep_id: record.repId,
+    lane: record.lane,  // IMPORTANT: Pass lane directly without transformation
+    marked_at: new Date().toISOString(),
+    account_number: record.accountNumber,
+    url: record.url,
+    created_by: user.id,
+  };
 
-    if (error) throw error;
+  const { data, error } = await supabase
+    .from('replacement_marks')
+    .insert(dbData)
+    .select()
+    .single();
+
+  if (error) throw error;
+  
+  // Store hit count for marked lead (MFR = -1)
+  try {
+    const currentDate = new Date();
     
-    // Store hit count for marked lead (MFR = -1)
-    try {
-      const currentDate = new Date();
-      await createHitCount({
-        repId: record.repId,
-        hitType: 'MFR',
-        hitValue: -1,
-        // FIXED: Change 'over1k' to '1kplus' to match RotationLane type
-        lane: record.lane === '1kplus' ? '1kplus' : 'sub1k',
-        month: currentDate.getMonth() + 1,
-        year: currentDate.getFullYear()
-      });
-    } catch (hitError) {
-      console.error('Failed to store hit count for marked lead:', hitError);
-      // Don't fail the mark creation if hit count storage fails
-    }
+    console.log('Writing MFR hit with lane:', record.lane); // Debug log
     
-    console.log('Replacement mark created successfully:', {
-      leadId: record.leadId,
+    await createHitCount({
       repId: record.repId,
-      lane: record.lane
+      hitType: 'MFR',
+      hitValue: -1,
+      lane: record.lane,  // CRITICAL: Use the lane directly from record
+      month: currentDate.getMonth() + 1,
+      year: currentDate.getFullYear()
     });
-    
-    return dbToAppFormat(data);
+  } catch (hitError) {
+    console.error('Failed to store hit count for marked lead:', hitError);
   }
+  
+  return dbToAppFormat(data);
+}
 
   // Update replacement mark (apply replacement)
   static async updateReplacementMark(markId: string, replacedByLeadId: string): Promise<ReplacementRecord> {
@@ -130,38 +131,48 @@ export class ReplacementService {
     
     return dbToAppFormat(data);
   }
-  
-    static async deleteReplacementMark(markId: string): Promise<void> {
-    // 1) Read the mark we’re about to remove (for compensating write)
-    const { data: mark, error: fetchError } = await supabase
-      .from('replacement_marks')
-      .select('*')
-      .eq('id', markId)
-      .single();
-    if (fetchError) throw fetchError;
+  static async deleteReplacementMark(markId: string): Promise<void> {
+  // 1) Read the mark we're about to remove
+  const { data: mark, error: fetchError } = await supabase
+    .from('replacement_marks')
+    .select('*')
+    .eq('id', markId)
+    .single();
+  if (fetchError) throw fetchError;
 
-    // 2) Delete the mark
-    const { error } = await supabase
-      .from('replacement_marks')
-      .delete()
-      .eq('id', markId);
-    if (error) throw error;
- // 3) Compensating hit: Use MFR_UNMARKED to return to NL status
-    try {
-      const now = new Date();
-      await createHitCount({
-        repId: mark.rep_id,
-        leadEntryId: mark.lead_id,
-        hitType: 'MFR_UNMARK',
-        hitValue: 1,
-        lane: mark.lane === '1kplus' ? '1kplus' : 'sub1k',
-        month: now.getMonth() + 1,
-        year: now.getFullYear(),
-      });
-    } catch (hitError) {
-      console.error('Failed to write MFR_UNMARKED hit:', hitError);
-    }
-   }
+  // 2) Delete the mark
+  const { error } = await supabase
+    .from('replacement_marks')
+    .delete()
+    .eq('id', markId);
+  if (error) throw error;
+
+  // 3) Compensating hit: Use MFR_UNMARK to return to NL status
+  try {
+    const now = new Date();
+    
+    // CRITICAL: Normalize lane - ensure it's '1kplus' not 'over1k'
+    const normalizedLane: 'sub1k' | '1kplus' = 
+      mark.lane === 'over1k' || mark.lane === '1kplus' || mark.lane === '1k+' 
+        ? '1kplus' 
+        : 'sub1k';
+    
+    console.log('Writing MFR_UNMARK hit with lane:', normalizedLane); // Debug log
+    
+    await createHitCount({
+      repId: mark.rep_id,
+      leadEntryId: mark.lead_id,
+      hitType: 'MFR_UNMARK',
+      hitValue: 1,
+      lane: normalizedLane,
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
+    });
+  } catch (hitError) {
+    console.error('Failed to write MFR_UNMARK hit:', hitError);
+  }
+}
+    
   // Undo replacement (clear replaced_by_lead_id)
   static async undoReplacement(markId: string): Promise<ReplacementRecord> {
     console.log('Undoing replacement for mark:', markId);

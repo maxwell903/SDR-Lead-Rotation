@@ -17,7 +17,7 @@ import {
   removeLeadMark,
   RotationLane,
 } from './features/leadReplacement';
-
+import RotationPanelMK2 from './components/RotationPanelMK2';
 import ConnectionTest from './components/ConnectionTest';
 import { useSalesReps } from './hooks/useSupabaseData';
 import AuthWrapper from './components/AuthWrapper';
@@ -1037,31 +1037,36 @@ const handleDeleteLead = async (leadId: string) => {
   // UPDATED: Enhanced handleRemoveReplacementMark with immediate UI refresh
   // Put near your other handlers in App.tsx
 const handleRemoveReplacementMark = async (leadId: string) => {
-  // Look up the replacement record first (this holds the *original* rep & lane)
   const rec = replacementState.byLeadId?.[leadId];
-
-  // Fallback to the live lead row if needed (rare, but safe)
   const lead = currentMonthData.leads.find(l => l.id === leadId);
 
   const repId = rec?.repId ?? lead?.assignedTo;
-  const lane: 'sub1k' | '1kplus' = rec?.lane ?? getLaneFromUnits(lead?.unitCount);
+  
+  // CRITICAL: Determine lane from lead's unit count directly
+  const leadUnitCount = lead?.unitCount ?? 0;
+  const lane: 'sub1k' | '1kplus' = leadUnitCount >= 1000 ? '1kplus' : 'sub1k';
+  
+  console.log('Unmarking lead:', {
+    leadId,
+    unitCount: leadUnitCount,
+    lane: lane,  // Debug: should show '1kplus' for 1k+ leads
+    repId
+  });
 
   // Only record a hit if we have enough context
   if (repId && lane) {
     await createHitCount({
       repId,
-      hitType: 'MFR',        // use 'MFR' to keep semantics symmetric with mark/delete
-      hitValue: 1,           // UNMARK should add the point back
+      hitType: 'MFR_UNMARK',  // CHANGED: Use MFR_UNMARK for clarity
+      hitValue: 1,            // UNMARK adds the point back
       lane,
       month: currentDate.getMonth() + 1,
       year: currentDate.getFullYear(),
     });
   }
 
-  // Finally remove the mark
   await dbRemoveLeadMark(leadId);
 };
-
   
 
   const getCurrentDay = (): number => {
@@ -1160,14 +1165,7 @@ const handleRemoveReplacementMark = async (leadId: string) => {
           </div>
           
           <div className="space-y-6">
-            <RotationPanel
-              salesReps={salesReps}
-              rotationState={rotationState}
-              onUpdateRotation={setRotationState}
-              leadEntries={currentMonthData.entries}
-              leads={currentMonthData.leads}
-              replacementState={replacementState}
-            />
+            <RotationPanelMK2 salesReps={salesReps} />
           </div>
         </div>
       </div>
