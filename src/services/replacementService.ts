@@ -110,8 +110,27 @@ export class ReplacementService {
       .single();
 
     if (error) throw error;
+    
+    // Store hit count for replacement lead (LRL = +1)
+    try {
+      const currentDate = new Date();
+      await createHitCount({
+        repId: data.rep_id,
+        leadEntryId: replacedByLeadId,
+        hitType: 'LRL',
+        hitValue: 1,
+        lane: data.lane === '1kplus' ? '1kplus' : 'sub1k',
+        month: currentDate.getMonth() + 1,
+        year: currentDate.getFullYear()
+      });
+    } catch (hitError) {
+      console.error('Failed to store hit count for LRL:', hitError);
+      // Don't fail the replacement if hit count storage fails
+    }
+    
     return dbToAppFormat(data);
   }
+  
     static async deleteReplacementMark(markId: string): Promise<void> {
     // 1) Read the mark we’re about to remove (for compensating write)
     const { data: mark, error: fetchError } = await supabase

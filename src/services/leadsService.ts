@@ -105,6 +105,7 @@ export async function createLead(
 }
 
 /** CREATE LRL lead with replacement relationship */
+  /** CREATE LRL lead with replacement relationship */
 export async function createLeadWithReplacement(
   input: Omit<Lead, 'id'> & { id?: string },
   originalLeadIdToReplace: string
@@ -112,7 +113,7 @@ export async function createLeadWithReplacement(
   const id = input.id ?? `lead_${Date.now()}`
   const newLead: Lead = { ...input, id }
   
-  // Create the new lead first
+  // Create the new lead first (without hit count - it will be added when we apply replacement)
   const { data, error } = await supabase
     .from('leads')
     .insert(leadToRow(newLead))
@@ -136,23 +137,9 @@ export async function createLeadWithReplacement(
     if (!markData) throw new Error('Original lead not marked for replacement')
     
     // Update the replacement mark with the new lead ID
+    // Update the replacement mark with the new lead ID
+    // This now creates the LRL hit count inside updateReplacementMark
     await ReplacementService.updateReplacementMark(markData.id, created.id)
-    
-    // Store hit count for replacement lead (LRL = +1) — Path A normalization
-    try {
-      const lane = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
-      await createHitCount({
-        repId: created.assignedTo,
-        hitType: 'LRL',
-        hitValue: 1,
-        lane,
-        month: created.month,
-        year: created.year
-      });
-    } catch (hitError) {
-      console.error('Failed to store hit count for replacement lead:', hitError);
-      // Don't fail the replacement if hit count storage fails
-    }
     
     console.log('LRL replacement applied successfully:', {
       originalLeadId: originalLeadIdToReplace,
@@ -357,6 +344,7 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
       await ReplacementService.undoReplacement(isReplacementData.id)
     }
     
+    
     // Step 2: Check if this lead has a replacement
     const { data: hasReplacementData, error: hasReplacementError } = await supabase
       .from('replacement_marks')
@@ -412,8 +400,13 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
       const units = (old?.unit_count ?? 0) as number;
       const lane: 'sub1k' | '1kplus' = units >= 1000 ? '1kplus' : 'sub1k';
 
-      if (isReplacementData) {
-        // This lead was an LRL — negate its previous +1
+      // Determine the lead type and apply appropriate compensating hit
+      const isMFR = hasReplacementData && !hasReplacementData.replaced_by_lead_id;
+      const isLRL = isReplacementData;
+      
+      if (isLRL) {
+        // This lead was an LRL – negate its previous +1
+        console.log('Deleting LRL lead - compensating with LRL -1');
         await createHitCount({
           repId,
           leadEntryId: leadId,
@@ -423,13 +416,22 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
           month: now.getMonth() + 1,
           year:  now.getFullYear(),
         });
-      } else if (hasReplacementData && !hasReplacementData.replaced_by_lead_id) {
-        // This lead is marked as MFR (not yet replaced) - no compensation
-        // NL(+1) + MFR(-1) + Delete = 0 total (as if never existed)
-        console.log('Deleting MFR lead - no compensation needed (already at 0)');
-
+      } else if (isMFR) {
+        // This lead is marked as MFR (not yet replaced) - send hit_value: 0
+        // User wants explicit 0 record for DELETE MFR for audit purposes
+        console.log('Deleting MFR lead - recording MFR 0 for audit');
+        await createHitCount({
+          repId,
+          leadEntryId: leadId,
+          hitType: 'MFR',
+          hitValue: 0,
+          lane,
+          month: now.getMonth() + 1,
+          year: now.getFullYear(),
+        });
       } else {
-        // Normal counted lead — negate its previous +1
+        // Normal counted lead (NL) — negate its previous +1
+        console.log('Deleting NL lead - compensating with NL -1');
         await createHitCount({
           repId,
           leadEntryId: leadId,

@@ -764,43 +764,16 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
       year
     });
     console.log('Lead saved successfully:', newLead.id);
-    
+
     // Replacement flow: link the new lead to the marked original
     if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
       setDbLoadingMessage('Applying replacement...');
       await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
-      // Hit accounting: LRL closes the mark → +1
-      const assignment = getReplacementAssignment(leadData.originalLeadIdToReplace);
-      const lane = (assignment?.lane ?? getLaneFromUnits(newLead?.unitCount ?? leadData.unitCount));
-      await createHitCount({
-        repId: assignedRepId,
-        hitType: 'LRL',
-        hitValue: +1,
-        lane,
-        month: currentDate.getMonth() + 1,
-        year: currentDate.getFullYear(),
-      });
-      updateRotationAfterAssignment(
-       assignedRepId,
-        (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
-      );
-    } else {
-      // Normal lead path
-      updateRotationAfterAssignment(
-        assignedRepId,
-        (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
-     );
+      // Hit count for LRL is now created inside updateReplacementMark (via replacementService)
     }
 
-      // Hit accounting: NL → +1
-      await createHitCount({
-        repId: assignedRepId,
-        hitType: 'NL',
-        hitValue: +1,
-        lane: getLaneFromUnits(newLead?.unitCount ?? leadData.unitCount),
-        month: currentDate.getMonth() + 1,
-        year: currentDate.getFullYear(),
-      });
+    // Hit count for normal leads (NL) is now created inside createLead (via leadsService)
+    // No manual hit creation needed here anymore
     
     // Database subscription will handle UI updates
     setShowLeadModal(false);
@@ -877,18 +850,35 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 
     if (entry) {
       // If it's a lead, delete from database ONLY
-      if (entry.leadId) {
-        try {
+           if (entry.leadId) {
+       try {
+         // Hit accounting before deletion (we still have full context)
+         // 1) Is this an OPEN MFR? (original lead was marked and has NOT been replaced yet)
+          const recForOriginal = replacementState.byLeadId?.[entry.leadId];
+          const isOpenMFR = !!recForOriginal && !recForOriginal.replacedByLeadId;
 
-          // Hit accounting before deletion (we still have full context)
-          const lane = getLaneFromUnits(entry.unitCount);
+          // 2) Is this an LRL? (this lead is referenced as a replacement on some original)
           const isReplacementLead = Object.values(replacementState.byLeadId || {}).some(
             (rec) => rec?.replacedByLeadId === entry.leadId
           );
+
+          // Lane comes from the mark if it's an MFR; otherwise fall back to unit-based lane
+          const lane = isOpenMFR
+            ? (recForOriginal!.lane as 'sub1k' | '1kplus')
+            : getLaneFromUnits(entry.unitCount);
+
+          // Hit semantics on delete:
+          // - Deleting OPEN MFR -> record explicit MFR 0 (your requirement)
+          // - Deleting LRL -> LRL -1
+          // - Else (normal lead) -> NL -1
+          const hitType = isOpenMFR ? 'MFR' : (isReplacementLead ? 'LRL' : 'NL');
+          const hitValue = isOpenMFR ? 0 : -1;
+
           await createHitCount({
             repId: entry.repId,
-            hitType: isReplacementLead ? 'LRL' : 'NL',
-            hitValue: -1,
+            // lead_entry_id intentionally omitted => will be NULL in DB (as in your example)
+            hitType,
+            hitValue,
             lane,
             month: currentDate.getMonth() + 1,
             year: currentDate.getFullYear(),
@@ -896,6 +886,7 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 
           await removeLead(entry.leadId);
           // Database subscription will handle UI updates
+
           console.log('Lead deleted successfully with replacement handling');
         } catch (error) {
           console.error('Failed to delete lead from database:', error);
@@ -1029,21 +1020,12 @@ const handleDeleteLead = async (leadId: string) => {
   }
 };
 
-  // UPDATED: Enhanced handleMarkForReplacement with immediate UI refresh
-  // --- Replacement hit writers ---
   const handleMarkForReplacement = async (leadId: string) => {
     const lead = currentMonthData.leads.find(l => l.id === leadId);
     if (!lead) return;
     try {
       await dbMarkLeadForReplacement(lead);
-      await createHitCount({
-        repId: lead.assignedTo,
-        hitType: 'MFR',
-        hitValue: -1,
-        lane: getLaneFromUnits(lead.unitCount),
-        month: currentDate.getMonth() + 1,
-        year: currentDate.getFullYear(),
-      });
+      // Hit count is now created inside dbMarkLeadForReplacement (via replacementService)
     } catch (e) {
       console.error('Failed to mark for replacement or write hit:', e);
     }
@@ -1055,26 +1037,8 @@ const handleDeleteLead = async (leadId: string) => {
   // UPDATED: Enhanced handleRemoveReplacementMark with immediate UI refresh
   const handleRemoveReplacementMark = async (leadId: string) => {
     try {
-      const rec = replacementState.byLeadId[leadId];
       await dbRemoveLeadMark(leadId);
-      // If we can attribute it, credit back +1
-      const repId =
-        rec?.repId ??
-        currentMonthData.leads.find(l => l.id === leadId)?.assignedTo ??
-        '';
-      const lane =
-        rec?.lane ??
-        getLaneFromUnits(currentMonthData.leads.find(l => l.id === leadId)?.unitCount);
-      if (repId) {
-        await createHitCount({
-          repId,
-          hitType: 'MFR_UNMARK',
-          hitValue: +1,
-          lane: lane as any,
-          month: currentDate.getMonth() + 1,
-          year: currentDate.getFullYear(),
-        });
-      }
+      // Hit count is now created inside dbRemoveLeadMark (via replacementService)
     } catch (e) {
       console.error('Failed to unmark replacement or write hit:', e);
     }
