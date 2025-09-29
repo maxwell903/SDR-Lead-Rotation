@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase'
 import { logAction } from './actionTracker'
 import { ReplacementService } from './replacementService'
+import { createHitCount } from './hitCountsService'
 import type { Lead, LeadEntry } from '../types'
 import { ReplacementState } from '../features/leadReplacement'
 
@@ -77,6 +78,22 @@ export async function createLead(
   
   const created = rowToLead(data as DBLeadRow)
   
+  // Store hit count for normal lead (NL = +1)
+  try {
+    const lane = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
+    await createHitCount({
+      repId: created.assignedTo,
+      hitType: 'NL',
+      hitValue: 1,
+      lane,
+      month: created.month,
+      year: created.year
+    });
+  } catch (hitError) {
+    console.error('Failed to store hit count for new lead:', hitError);
+    // Don't fail the lead creation if hit count storage fails
+  }
+  
   await logAction({
     actionType: 'CREATE',
     tableName: 'leads',
@@ -121,6 +138,22 @@ export async function createLeadWithReplacement(
     // Update the replacement mark with the new lead ID
     await ReplacementService.updateReplacementMark(markData.id, created.id)
     
+    // Store hit count for replacement lead (LRL = +1) — Path A normalization
+    try {
+      const lane = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
+      await createHitCount({
+        repId: created.assignedTo,
+        hitType: 'LRL',
+        hitValue: 1,
+        lane,
+        month: created.month,
+        year: created.year
+      });
+    } catch (hitError) {
+      console.error('Failed to store hit count for replacement lead:', hitError);
+      // Don't fail the replacement if hit count storage fails
+    }
+    
     console.log('LRL replacement applied successfully:', {
       originalLeadId: originalLeadIdToReplace,
       newLeadId: created.id,
@@ -133,9 +166,6 @@ export async function createLeadWithReplacement(
     await supabase.from('leads').delete().eq('id', created.id)
     throw new Error('Failed to create replacement relationship')
   }
-  
-  
-    
   
   await logAction({
     actionType: 'CREATE',
@@ -363,6 +393,56 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
       .eq('id', leadId)
     
     if (deleteError) throw deleteError
+
+
+   // Step 5.1: Compensating hit to reverse this lead's counted contribution
+    // - If this lead is an LRL replacement => write LRL = -1
+    // - If this lead is a marked MFR => no compensation (already at 0)
+    // - Else normal lead => write NL = -1
+    try {
+      // We fetched these above; both variables are in this function’s scope:
+      //   const { data: isReplacementData } = supabase.from('replacement_marks').eq('replaced_by_lead_id', leadId).maybeSingle()
+      //   const { data: hasReplacementData } = supabase.from('replacement_marks').eq('lead_id', leadId).maybeSingle()
+      //
+      // We also fetched oldData above for logging; use it for lane/rep:
+      //   const { data: oldData } = supabase.from('leads').select('*').eq('id', leadId).single()
+      const now = new Date();
+      const old = oldData as any; // DB row
+      const repId = (old?.assigned_to ?? '') as string;
+      const units = (old?.unit_count ?? 0) as number;
+      const lane: 'sub1k' | '1kplus' = units >= 1000 ? '1kplus' : 'sub1k';
+
+      if (isReplacementData) {
+        // This lead was an LRL — negate its previous +1
+        await createHitCount({
+          repId,
+          leadEntryId: leadId,
+          hitType: 'LRL',
+          hitValue: -1,
+          lane,
+          month: now.getMonth() + 1,
+          year:  now.getFullYear(),
+        });
+      } else if (hasReplacementData && !hasReplacementData.replaced_by_lead_id) {
+        // This lead is marked as MFR (not yet replaced) - no compensation
+        // NL(+1) + MFR(-1) + Delete = 0 total (as if never existed)
+        console.log('Deleting MFR lead - no compensation needed (already at 0)');
+
+      } else {
+        // Normal counted lead — negate its previous +1
+        await createHitCount({
+          repId,
+          leadEntryId: leadId,
+          hitType: 'NL',
+          hitValue: -1,
+          lane,
+          month: now.getMonth() + 1,
+          year:  now.getFullYear(),
+        });
+      }
+    } catch (compErr) {
+      console.error('Failed to write compensating hit on lead delete:', compErr);
+    }
     
     // Step 6: Log the deletion
     if (oldData) {

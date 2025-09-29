@@ -7,6 +7,7 @@ import LeadModal from './components/LeadModal';
 import ParametersPanel from './components/ParametersPanel';
 import { SalesRep, Lead, RotationState, LeadEntry, MonthData } from './types';
 import { useReplacementState } from './hooks/useReplacementState';
+import { createHitCount } from './services/hitCountsService';
 import {
   ReplacementState,
   createEmptyReplacementState,
@@ -529,6 +530,11 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     return eligibleReps[0]?.id || null;
   };
 
+  // Helper: normalize lane
+  const getLaneFromUnits = (units?: number) =>
+    (units ?? 0) >= 1000 ? ('1kplus' as const) : ('sub1k' as const);
+
+
   const updateRotationAfterAssignment = (assignedRepId: string, isOver1k: boolean, isSkip: boolean = false) => {
     // The rotation state will be automatically recalculated in the useEffect
     // when the monthlyData changes, so we don't need to manually update it here
@@ -624,39 +630,62 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 
   // Handle non-lead entries (skip, ooo, next) - keep in local state only
   if (leadData.type && leadData.type !== 'lead') {
-    const newEntry: LeadEntry = {
-      id: generateUniqueId('nonlead'),
-      day: selectedCell?.day || new Date().getDate(),
-      repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
-      type: leadData.type,
-      value: leadData.type.toUpperCase(),
-      url: undefined,
-      comments: [],
-      month,
-      year,
-      unitCount: undefined,
-      rotationTarget: leadData.rotationTarget || 'both',
-      propertyTypes: leadData.propertyTypes || [],
-    };
-    
-    // Use safe state update to prevent duplicates
-    updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
-      const duplicate = checkForDuplicateEntry(entries, newEntry);
-      if (duplicate) {
-        alert(`A ${leadData.type.toUpperCase()} entry already exists for ${salesReps.find(r => r.id === newEntry.repId)?.name || 'this rep'} on day ${newEntry.day}`);
-        throw new Error('Duplicate entry prevented');
-      }
-      return safeAddEntryToState(entries, newEntry);
-    });
+  const newEntry: LeadEntry = {
+    id: generateUniqueId('nonlead'),
+    day: selectedCell?.day || new Date().getDate(),
+    repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
+    type: leadData.type,
+    value: leadData.type.toUpperCase(),
+    url: undefined,
+    comments: [],
+    month,
+    year,
+    unitCount: undefined,
+    rotationTarget: leadData.rotationTarget || 'both',
+    propertyTypes: leadData.propertyTypes || [],
+  };
+  
+  // Use safe state update to prevent duplicates
+  updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
+    const duplicate = checkForDuplicateEntry(entries, newEntry);
+    if (duplicate) {
+      alert(`A ${leadData.type.toUpperCase()} entry already exists for ${salesReps.find(r => r.id === newEntry.repId)?.name || 'this rep'} on day ${newEntry.day}`);
+      throw new Error('Duplicate entry prevented');
+    }
+    return safeAddEntryToState(entries, newEntry);
+  });
 
-    if (leadData.type === 'skip') {
-      updateRotationAfterAssignment(newEntry.repId, false, true);
+  // Store hit count for skip entries (SKIP = +1)
+  if (leadData.type === 'skip') {
+    try {
+      // Determine lane based on rotationTarget or default to both lanes
+      const lanes = leadData.rotationTarget === 'over1k' ? ['1kplus'] : 
+                   leadData.rotationTarget === 'sub1k' ? ['sub1k'] : 
+                   ['sub1k', '1kplus']; // both lanes
+      
+      for (const lane of lanes) {
+        await createHitCount({
+          repId: newEntry.repId,
+          hitType: 'SKIP',
+          hitValue: 1,
+          lane: lane as any,
+          month: month + 1,
+          year
+        });
+      }
+    } catch (hitError) {
+      console.error('Failed to store hit count for skip:', hitError);
+      // Don't fail the skip creation if hit count storage fails
     }
     
-    setShowLeadModal(false);
-    setSelectedCell(null);
-    return;
+    updateRotationAfterAssignment(newEntry.repId, false, true);
   }
+  
+  setShowLeadModal(false);
+  setSelectedCell(null);
+  return;
+}
+
 
   // Handle lead assignment with enhanced duplicate prevention
   let assignedRepId = leadData.assignedTo;
@@ -740,6 +769,17 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
       setDbLoadingMessage('Applying replacement...');
       await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
+      // Hit accounting: LRL closes the mark → +1
+      const assignment = getReplacementAssignment(leadData.originalLeadIdToReplace);
+      const lane = (assignment?.lane ?? getLaneFromUnits(newLead?.unitCount ?? leadData.unitCount));
+      await createHitCount({
+        repId: assignedRepId,
+        hitType: 'LRL',
+        hitValue: +1,
+        lane,
+        month: currentDate.getMonth() + 1,
+        year: currentDate.getFullYear(),
+      });
       updateRotationAfterAssignment(
        assignedRepId,
         (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
@@ -751,6 +791,16 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
         (newLead?.unitCount ?? leadData.unitCount ?? 0) >= 1000
      );
     }
+
+      // Hit accounting: NL → +1
+      await createHitCount({
+        repId: assignedRepId,
+        hitType: 'NL',
+        hitValue: +1,
+        lane: getLaneFromUnits(newLead?.unitCount ?? leadData.unitCount),
+        month: currentDate.getMonth() + 1,
+        year: currentDate.getFullYear(),
+      });
     
     // Database subscription will handle UI updates
     setShowLeadModal(false);
@@ -829,6 +879,21 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
       // If it's a lead, delete from database ONLY
       if (entry.leadId) {
         try {
+
+          // Hit accounting before deletion (we still have full context)
+          const lane = getLaneFromUnits(entry.unitCount);
+          const isReplacementLead = Object.values(replacementState.byLeadId || {}).some(
+            (rec) => rec?.replacedByLeadId === entry.leadId
+          );
+          await createHitCount({
+            repId: entry.repId,
+            hitType: isReplacementLead ? 'LRL' : 'NL',
+            hitValue: -1,
+            lane,
+            month: currentDate.getMonth() + 1,
+            year: currentDate.getFullYear(),
+          });
+
           await removeLead(entry.leadId);
           // Database subscription will handle UI updates
           console.log('Lead deleted successfully with replacement handling');
@@ -855,6 +920,25 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 
       // Recalculate skip counts (for non-lead entries)
       if (entry.type === 'skip') {
+        // Hit accounting: deleting SKIP → −1 (apply to lane(s) it targeted)
+        try {
+          const lanes =
+            entry.rotationTarget === 'over1k' ? ['1kplus'] :
+            entry.rotationTarget === 'sub1k' ? ['sub1k'] :
+            ['sub1k','1kplus'];
+          for (const lane of lanes) {
+            await createHitCount({
+              repId: entry.repId,
+              hitType: 'SKIP',
+              hitValue: -1,
+              lane: lane as any,
+             month: currentDate.getMonth() + 1,
+              year: currentDate.getFullYear(),
+            });
+          }
+        } catch (e) {
+          console.error('Failed to record SKIP delete hit:', e);
+        }
         const newSkipCounts: { [repId: string]: number } = {};
         updatedEntries.forEach(e => {
           if (e.type === 'skip') {
@@ -899,6 +983,40 @@ const handleUpdateLead = async (updatedData: any) => {
     throw error;
   }
 };
+  // UnReplace & Add New: Delete LRL and create new NL
+  const handleUnreplaceAndCreateNew = async (lrlLeadId: string, newLeadData: any) => {
+    try {
+      const lrlLead = currentMonthData.leads.find(l => l.id === lrlLeadId);
+      if (!lrlLead) {
+        throw new Error('LRL lead not found');
+      }
+
+      // Delete the LRL lead (this will also reopen the MFR mark)
+      // deleteLeadWithReplacementHandling will:
+      // 1. Call undoReplacement (reopens mark, no hit)
+      // 2. Write LRL = -1 (compensating hit)
+      await removeLead(lrlLeadId);
+
+      // Create the new NL lead
+      // createLead will write NL = +1
+      const newLead = await addLead({
+       accountNumber: newLeadData.accountNumber,
+        url: newLeadData.url || '',
+        propertyTypes: newLeadData.propertyTypes || [],
+       unitCount: newLeadData.unitCount || 0,
+        assignedTo: newLeadData.assignedTo,
+        date: new Date(newLeadData.year, newLeadData.month - 1, newLeadData.day),
+        comments: [],
+        month: newLeadData.month,
+        year: newLeadData.year,
+      });
+
+      // Net effect: -1 (delete LRL) + 1 (new NL) = 0, but MFR is reopened
+    } catch (error) {
+      console.error('Failed to unreplace and create new:', error);
+      throw error;
+    }
+  };
 
 const handleDeleteLead = async (leadId: string) => {
   try {
@@ -912,50 +1030,57 @@ const handleDeleteLead = async (leadId: string) => {
 };
 
   // UPDATED: Enhanced handleMarkForReplacement with immediate UI refresh
+  // --- Replacement hit writers ---
   const handleMarkForReplacement = async (leadId: string) => {
-    // Search across months for the lead data
-    let targetLead: Lead | undefined;
-    
-    // Check current month first
-    targetLead = currentMonthData.leads.find(l => l.id === leadId);
-    
-    // If not found, search other months
-    if (!targetLead) {
-      for (const monthKey of Object.keys(monthlyData)) {
-        const monthData = monthlyData[monthKey];
-        const found = monthData.leads.find(l => l.id === leadId);
-        if (found) {
-          targetLead = found;
-          break;
-        }
-      }
-    }
-    
-    if (!targetLead) {
-      console.error('Lead not found for marking:', leadId);
-      alert('Lead not found');
-      return;
-    }
-    
+    const lead = currentMonthData.leads.find(l => l.id === leadId);
+    if (!lead) return;
     try {
-      await dbMarkLeadForReplacement(targetLead);
-      // Page will auto-refresh via real-time subscription
-    } catch (error) {
-      console.error('Error marking lead for replacement:', error);
-      alert('Failed to mark lead for replacement');
+      await dbMarkLeadForReplacement(lead);
+      await createHitCount({
+        repId: lead.assignedTo,
+        hitType: 'MFR',
+        hitValue: -1,
+        lane: getLaneFromUnits(lead.unitCount),
+        month: currentDate.getMonth() + 1,
+        year: currentDate.getFullYear(),
+      });
+    } catch (e) {
+      console.error('Failed to mark for replacement or write hit:', e);
     }
   };
+
+ 
+
 
   // UPDATED: Enhanced handleRemoveReplacementMark with immediate UI refresh
   const handleRemoveReplacementMark = async (leadId: string) => {
     try {
+      const rec = replacementState.byLeadId[leadId];
       await dbRemoveLeadMark(leadId);
-      // Page will auto-refresh via real-time subscription
-    } catch (error) {
-      console.error('Error removing replacement mark:', error);
-      alert('Failed to remove replacement mark');
+      // If we can attribute it, credit back +1
+      const repId =
+        rec?.repId ??
+        currentMonthData.leads.find(l => l.id === leadId)?.assignedTo ??
+        '';
+      const lane =
+        rec?.lane ??
+        getLaneFromUnits(currentMonthData.leads.find(l => l.id === leadId)?.unitCount);
+      if (repId) {
+        await createHitCount({
+          repId,
+          hitType: 'MFR_UNMARK',
+          hitValue: +1,
+          lane: lane as any,
+          month: currentDate.getMonth() + 1,
+          year: currentDate.getFullYear(),
+        });
+      }
+    } catch (e) {
+      console.error('Failed to unmark replacement or write hit:', e);
     }
   };
+
+  
 
   const getCurrentDay = (): number => {
     const est = getCurrentEST();
@@ -1046,8 +1171,8 @@ const handleDeleteLead = async (leadId: string) => {
               onEditEntry={handleEditEntry}
               leads={currentMonthData.leads}
               replacementState={replacementState}
-              onMarkForReplacement={handleMarkForReplacement}
-              onRemoveReplacementMark={handleRemoveReplacementMark}
+          onMarkForReplacement={handleMarkForReplacement}
+          onRemoveReplacementMark={handleRemoveReplacementMark}
               onEditLead={handleEditLead}
             />
           </div>
@@ -1107,6 +1232,7 @@ const handleDeleteLead = async (leadId: string) => {
     monthlyData={monthlyData}
     onMarkForReplacement={handleMarkForReplacement}
     onUnmarkForReplacement={handleRemoveReplacementMark}
+    onUnreplaceAndCreateNew={handleUnreplaceAndCreateNew}
   />
 )}
 

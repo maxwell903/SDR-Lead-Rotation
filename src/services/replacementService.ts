@@ -1,6 +1,7 @@
 // services/replacementService.ts
 import { supabase } from '../lib/supabase';
 import { ReplacementRecord } from '../features/leadReplacement';
+import { createHitCount } from './hitCountsService';
 
 export interface DbReplacementMark {
   id: string;
@@ -46,7 +47,6 @@ export class ReplacementService {
   static async createReplacementMark(record: Omit<ReplacementRecord, 'markId' | 'markedAt' | 'isClosed'>): Promise<ReplacementRecord> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('User not authenticated');
-    
 
     const dbData = {
       ...appToDbFormat(record),
@@ -62,11 +62,28 @@ export class ReplacementService {
 
     if (error) throw error;
     
+    // Store hit count for marked lead (MFR = -1)
+    try {
+      const currentDate = new Date();
+      await createHitCount({
+        repId: record.repId,
+        hitType: 'MFR',
+        hitValue: -1,
+        // FIXED: Change 'over1k' to '1kplus' to match RotationLane type
+        lane: record.lane === '1kplus' ? '1kplus' : 'sub1k',
+        month: currentDate.getMonth() + 1,
+        year: currentDate.getFullYear()
+      });
+    } catch (hitError) {
+      console.error('Failed to store hit count for marked lead:', hitError);
+      // Don't fail the mark creation if hit count storage fails
+    }
+    
     console.log('Replacement mark created successfully:', {
       leadId: record.leadId,
       repId: record.repId,
       lane: record.lane
-     });
+    });
     
     return dbToAppFormat(data);
   }
@@ -75,12 +92,12 @@ export class ReplacementService {
   static async updateReplacementMark(markId: string, replacedByLeadId: string): Promise<ReplacementRecord> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('User not authenticated');
+    
     console.log('Updating replacement mark:', {
       markId,
       replacedByLeadId,
       userId: user.id
     });
-
 
     const { data, error } = await supabase
       .from('replacement_marks')
@@ -95,17 +112,37 @@ export class ReplacementService {
     if (error) throw error;
     return dbToAppFormat(data);
   }
+    static async deleteReplacementMark(markId: string): Promise<void> {
+    // 1) Read the mark we’re about to remove (for compensating write)
+    const { data: mark, error: fetchError } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .eq('id', markId)
+      .single();
+    if (fetchError) throw fetchError;
 
-  // Delete replacement mark
-  static async deleteReplacementMark(markId: string): Promise<void> {
+    // 2) Delete the mark
     const { error } = await supabase
       .from('replacement_marks')
       .delete()
       .eq('id', markId);
-
     if (error) throw error;
-  }
-
+ // 3) Compensating hit: Use MFR_UNMARKED to return to NL status
+    try {
+      const now = new Date();
+      await createHitCount({
+        repId: mark.rep_id,
+        leadEntryId: mark.lead_id,
+        hitType: 'MFR_UNMARK',
+        hitValue: 1,
+        lane: mark.lane === '1kplus' ? '1kplus' : 'sub1k',
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+      });
+    } catch (hitError) {
+      console.error('Failed to write MFR_UNMARKED hit:', hitError);
+    }
+   }
   // Undo replacement (clear replaced_by_lead_id)
   static async undoReplacement(markId: string): Promise<ReplacementRecord> {
     console.log('Undoing replacement for mark:', markId);
@@ -146,56 +183,118 @@ export class ReplacementService {
       .single();
 
     if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "not found"
-      if (data) {
-        console.log('Found replacement mark for lead:', leadId, data);
-      }
+    
+    if (data) {
+      console.log('Found replacement mark for lead:', leadId, data);
+    }
+    
     return data ? dbToAppFormat(data) : null;
   }
 
-  // ENHANCED: Subscribe to real-time changes with better event handling
-  static subscribeToChanges(callback: (payload: any) => void) {
-    console.log('Setting up real-time subscription for replacement_marks');
+  // Get replacement marks by rep ID
+  static async getReplacementMarksByRepId(repId: string): Promise<ReplacementRecord[]> {
+    const { data, error } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .eq('rep_id', repId)
+      .order('marked_at', { ascending: true });
+
+    if (error) throw error;
     
-    return supabase
-      .channel('replacement_marks_changes')
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'replacement_marks' 
-        }, 
-        (payload) => {
-          console.log('Real-time replacement mark change detected:', payload);
-          // Log more details about the change
-          console.log('Change details:', {
-            eventType: payload.eventType,
-            table: payload.table,
-            new: payload.new,
-            old: payload.old
-          });
-          
-          // Enhanced payload with event type
-          const enhancedPayload = {
-            ...payload,
-            eventType: payload.eventType || 'UPDATE', // Fallback
-          };
-          
-          callback(enhancedPayload);
-        }
-      )
-      .subscribe((status) => {
-        console.log('Replacement marks subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to replacement marks changes');
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('Error subscribing to replacement marks changes');
-        }
-      });
+    return data.map(dbToAppFormat);
   }
 
-  // Unsubscribe from real-time changes
-  static unsubscribeFromChanges(subscription: any) {
-    console.log('Unsubscribing from replacement marks changes');
-    return supabase.removeChannel(subscription);
+  // Get replacement marks by lane
+  static async getReplacementMarksByLane(lane: string): Promise<ReplacementRecord[]> {
+    const { data, error } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .eq('lane', lane)
+      .order('marked_at', { ascending: true });
+
+    if (error) throw error;
+    
+    return data.map(dbToAppFormat);
+  }
+
+  // Get open (unreplaced) replacement marks
+  static async getOpenReplacementMarks(): Promise<ReplacementRecord[]> {
+    const { data, error } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .is('replaced_by_lead_id', null)
+      .order('marked_at', { ascending: true });
+
+    if (error) throw error;
+    
+    return data.map(dbToAppFormat);
+  }
+
+  // Get closed (replaced) replacement marks
+  static async getClosedReplacementMarks(): Promise<ReplacementRecord[]> {
+    const { data, error } = await supabase
+      .from('replacement_marks')
+      .select('*')
+      .not('replaced_by_lead_id', 'is', null)
+      .order('marked_at', { ascending: true });
+
+    if (error) throw error;
+    
+    return data.map(dbToAppFormat);
+  }
+
+  // Check if a lead is marked for replacement
+  static async isLeadMarkedForReplacement(leadId: string): Promise<boolean> {
+    const { data, error } = await supabase
+      .from('replacement_marks')
+      .select('id')
+      .eq('lead_id', leadId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    
+    return Boolean(data);
+  }
+
+  // Check if a lead is a replacement lead (LRL)
+  static async isReplacementLead(leadId: string): Promise<{ isReplacement: boolean; originalLeadId?: string }> {
+    const { data, error } = await supabase
+      .from('replacement_marks')
+      .select('lead_id')
+      .eq('replaced_by_lead_id', leadId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    
+    return {
+      isReplacement: Boolean(data),
+      originalLeadId: data?.lead_id
+    };
+  }
+
+  // Get replacement statistics
+  static async getReplacementStats(): Promise<{
+    totalMarks: number;
+    openMarks: number;
+    closedMarks: number;
+    byLane: { sub1k: number; '1kplus': number };
+  }> {
+    const [allMarks, openMarks] = await Promise.all([
+      this.getAllReplacementMarks(),
+      this.getOpenReplacementMarks()
+    ]);
+
+    const byLane = { sub1k: 0, '1kplus': 0 };
+    allMarks.forEach(mark => {
+      if (mark.lane === 'sub1k') byLane.sub1k++;
+      else if (mark.lane === '1kplus') byLane['1kplus']++;
+    });
+
+    return {
+      totalMarks: allMarks.length,
+      openMarks: openMarks.length,
+      closedMarks: allMarks.length - openMarks.length,
+      byLane
+    };
   }
 }

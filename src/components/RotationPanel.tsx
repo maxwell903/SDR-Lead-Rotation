@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ChevronRight, ChevronUp, HelpCircle, Minimize2, Maximize2, Calendar, Clock, BarChart3 } from 'lucide-react';
+import RotationAlgorithmGuide from './RotationAlgorthmGuide.tsx';
 import type { SalesRep, RotationState, Lead, LeadEntry } from '../types';
 import {
   ReplacementState,
@@ -43,6 +44,11 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
   const [expandedSub1k, setExpandedSub1k] = useState(false);
   const [expandedOver1k, setExpandedOver1k] = useState(false);
   const [visiblePositions, setVisiblePositions] = useState(20);
+  const [isAlgoOpen, setIsAlgoOpen] = useState(false);
+
+  // Toggle this to control how the slideshow *describes* LRL hits.
+  // (Make sure it matches your countHits() implementation.)
+  const LRL_COUNTS_AS_ZERO = true;
 
   // Get current date for filtering
   const getCurrentEST = (): Date => {
@@ -914,6 +920,30 @@ const RotationPanel: React.FC<RotationPanelProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Rotation Algorithm (collapsed box) */}
+      <button
+        type="button"
+        onClick={() => setIsAlgoOpen(true)}
+        className="w-full mt-3 mb-2 flex items-center justify-between rounded-lg border px-3 py-2 text-sm bg-white hover:bg-gray-50"
+        aria-label="Open Rotation Algorithm guide"
+      >
+        <span className="font-medium">Rotation Algorithm</span>
+       <ChevronRight className="w-4 h-4" />
+      </button>
+
+      {/* Modal Mount */}
+      <RotationAlgorithmGuide
+        isOpen={isAlgoOpen}
+        onClose={() => setIsAlgoOpen(false)}
+        salesReps={salesReps}
+        leads={leads}
+        leadEntries={getFilteredEntries(leadEntries)}
+        replacementState={replacementState}
+        baseOrderSub1k={rotationState.normalRotationSub1k}
+        baseOrder1kPlus={rotationState.normalRotationOver1k}
+        lrlCountsAsZero={LRL_COUNTS_AS_ZERO}
+      />
 
       {/* Rotation Lanes */}
       <div className="space-y-4">
