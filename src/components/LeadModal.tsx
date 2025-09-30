@@ -101,9 +101,10 @@ const LeadModal: React.FC<LeadModalProps> = ({
   const isEditing = Boolean(editingEntry);
 
   // Get replacement options for the dropdown
-  const replacementOptions = useMemo(() => {
-    return buildReplacementOptions(monthlyData, replacementState, salesReps);
-    }, [monthlyData, replacementState, salesReps]);
+  const replacementOptions = useMemo(() => 
+  buildReplacementOptions(replacementState, salesReps, { includeClosed: false }), 
+  [replacementState, salesReps]
+);
 
   // Date formatting helpers
   const formatDateDisplay = (date: Date) => {

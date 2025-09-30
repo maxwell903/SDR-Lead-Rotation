@@ -239,8 +239,8 @@ export const undoReplacementByDeletingReplacementLead = (
 
 
 /** Build dropdown options for the Replace Lead toggle (usually open marks only) */
+/** Build dropdown options for the Replace Lead toggle (uses DB data only) */
 export function buildReplacementOptions(
-  monthly: MonthlyStore,
   state: ReplacementState,
   salesReps: SalesRep[],
   { includeClosed = false }: { includeClosed?: boolean } = {}
@@ -248,7 +248,6 @@ export function buildReplacementOptions(
   const options: Array<{ leadId: string; repId: string; repName: string; accountNumber: string; url?: string; lane: RotationLane; markedAt: number }> = [];
   
   try {
-    const leadMap = buildLeadMap(monthly || {});
     const repsMap = new Map(salesReps.map(r => [r.id, r.name]));
 
     if (!state?.queue || !Array.isArray(state.queue)) {
@@ -261,17 +260,17 @@ export function buildReplacementOptions(
       const rec = state.byLeadId[leadId];
       if (!rec) return;
       
+      // Skip closed replacements unless explicitly requested
       if (!includeClosed && rec.replacedByLeadId) return;
       
       const repName = repsMap.get(rec.repId) || rec.repId || 'Unknown Rep';
-      const lead = leadMap.get(leadId);
       
       options.push({
         leadId,
         repId: rec.repId || '',
         repName,
-        accountNumber: rec.accountNumber || lead?.accountNumber || 'Unknown Account',
-        url: rec.url || lead?.url || undefined,
+        accountNumber: rec.accountNumber || 'Unknown Account',
+        url: rec.url || undefined,
         lane: rec.lane || 'sub1k',
         markedAt: rec.markedAt || 0,
       });
