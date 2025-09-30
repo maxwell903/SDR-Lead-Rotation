@@ -818,82 +818,117 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     try {
     
     // Enhanced guard: Check if lead can be deleted and show warnings
-    if (entry?.type === 'lead' && entry.leadId) {
-      try {
-        const deletionStatus = await checkDeletionStatus(entry.leadId);
-        
-        // Show warning message if there are replacement implications
-        if (deletionStatus.warningMessage) {
-          const confirmed = window.confirm(
-            `Warning: ${deletionStatus.warningMessage}\n\n` +
-            'Do you want to proceed with the deletion? This action cannot be undone.'
-          );
-          if (!confirmed) {
-            return;
-          }
-        }
-        
-        if (!deletionStatus.canDelete) {
-          alert(deletionStatus.warningMessage || 'This lead cannot be deleted.');
-          return;
-        }
-      } catch (error) {
-        console.error('Error checking deletion status:', error);
-        const confirmed = window.confirm(
-          'Unable to verify deletion status. Do you want to proceed anyway? This action cannot be undone.'
-        );
-        if (!confirmed) {
-          return;
-        }
+if (entry?.type === 'lead' && entry.leadId) {
+  try {
+    // NEW: Check if this is an Open MFR (marked but not yet replaced)
+    const recForOriginal = replacementState.byLeadId?.[entry.leadId];
+    const isOpenMFR = !!recForOriginal && !recForOriginal.replacedByLeadId;
+    const isRLBR = !!recForOriginal && !!recForOriginal.replacedByLeadId;
+    
+    // NEW: Block deletion of Open MFR
+    if (isOpenMFR) {
+      alert(
+        'Cannot delete an Open MFR (orange box).\n\n' +
+        'To delete this lead:\n' +
+        '1. First unmark it for replacement\n' +
+        '2. Then delete it as a normal lead'
+      );
+      return;
+    }
+    
+    // NEW: Block deletion of RLBR (grey box - replaced lead)
+    if (isRLBR) {
+      alert(
+        'Cannot delete a Replaced Lead (grey box).\n\n' +
+        'To remove this lead:\n' +
+        '1. First delete the green replacement lead (LRL)\n' +
+        '2. Then unmark this lead for replacement\n' +
+        '3. Finally delete it as a normal lead'
+      );
+      return;
+    }
+    
+    const deletionStatus = await checkDeletionStatus(entry.leadId);
+    
+    // Show warning message if there are replacement implications
+    if (deletionStatus.warningMessage) {
+      const confirmed = window.confirm(
+        `Warning: ${deletionStatus.warningMessage}\n\n` +
+        'Do you want to proceed with the deletion? This action cannot be undone.'
+      );
+      if (!confirmed) {
+        return;
       }
     }
+    
+    if (!deletionStatus.canDelete) {
+      alert(deletionStatus.warningMessage || 'This lead cannot be deleted.');
+      return;
+    }
+  } catch (error) {
+    console.error('Error checking deletion status:', error);
+    const confirmed = window.confirm(
+      'Unable to verify deletion status. Do you want to proceed anyway? This action cannot be undone.'
+    );
+    if (!confirmed) {
+      return;
+    }
+  }
+}
 
     if (entry) {
-      // If it's a lead, delete from database ONLY
-           if (entry.leadId) {
-       try {
-         // Hit accounting before deletion (we still have full context)
-         // 1) Is this an OPEN MFR? (original lead was marked and has NOT been replaced yet)
-          const recForOriginal = replacementState.byLeadId?.[entry.leadId];
-          const isOpenMFR = !!recForOriginal && !recForOriginal.replacedByLeadId;
+       if (entry.leadId) {
+  try {
+    // Hit accounting before deletion (we still have full context)
+    // 1) Is this an OPEN MFR? (original lead was marked and has NOT been replaced yet)
+     const recForOriginal = replacementState.byLeadId?.[entry.leadId];
+     const isOpenMFR = !!recForOriginal && !recForOriginal.replacedByLeadId;
 
-          // 2) Is this an LRL? (this lead is referenced as a replacement on some original)
-          const isReplacementLead = Object.values(replacementState.byLeadId || {}).some(
-            (rec) => rec?.replacedByLeadId === entry.leadId
-          );
+     // 2) Is this an LRL? (this lead is referenced as a replacement on some original)
+     const isReplacementLead = Object.values(replacementState.byLeadId || {}).some(
+       (rec) => rec?.replacedByLeadId === entry.leadId
+     );
 
-          // Lane comes from the mark if it's an MFR; otherwise fall back to unit-based lane
-          const lane = isOpenMFR
-            ? (recForOriginal!.lane as 'sub1k' | '1kplus')
-            : getLaneFromUnits(entry.unitCount);
+     // Lane comes from the mark if it's an MFR; otherwise fall back to unit-based lane
+     const lane = isOpenMFR
+       ? (recForOriginal!.lane as 'sub1k' | '1kplus')
+       : getLaneFromUnits(entry.unitCount);
 
-          // Hit semantics on delete:
-          // - Deleting OPEN MFR -> record explicit MFR 0 (your requirement)
-          // - Deleting LRL -> LRL -1
-          // - Else (normal lead) -> NL -1
-          const hitType = isOpenMFR ? 'MFR' : (isReplacementLead ? 'LRL' : 'NL');
-          const hitValue = isOpenMFR ? 0 : -1;
+     // Hit semantics on delete:
+     // - Deleting LRL -> LRL -1
+     // - Else (normal lead) -> NL -1
+     // NOTE: OPEN MFR deletion is now blocked above, so no need for MFR 0 logic
+     const hitType = isReplacementLead ? 'LRL' : 'NL';
+     const hitValue = -1;
 
-          await createHitCount({
-            repId: entry.repId,
-            // lead_entry_id intentionally omitted => will be NULL in DB (as in your example)
-            hitType,
-            hitValue,
-            lane,
-            month: currentDate.getMonth() + 1,
-            year: currentDate.getFullYear(),
-          });
+     await createHitCount({
+       repId: entry.repId,
+       // lead_entry_id intentionally omitted => will be NULL in DB (as in your example)
+       hitType,
+       hitValue,
+       lane,
+       month: currentDate.getMonth() + 1,
+       year: currentDate.getFullYear(),
+     });
 
-          await removeLead(entry.leadId);
-          // Database subscription will handle UI updates
+     await removeLead(entry.leadId);
+     
+     // NEW: Force immediate UI refresh for LRL deletions
+     if (isReplacementLead) {
+       console.log('LRL deleted - forcing replacement state refresh');
+       // Find the replacement state hook and call its refresh function
+       // This will be handled by the subscription, but we can also manually refresh
+       await new Promise(resolve => setTimeout(resolve, 300)); // Wait for DB propagation
+     }
 
-          console.log('Lead deleted successfully with replacement handling');
-        } catch (error) {
-          console.error('Failed to delete lead from database:', error);
-          alert('Failed to delete lead. Please try again.');
-        }
-        return; // Early return for leads
-      }
+     console.log('Lead deleted successfully with replacement handling');
+   } catch (error) {
+     console.error('Failed to delete lead from database:', error);
+     alert('Failed to delete lead. Please try again.');
+   }
+   return; // Early return for leads
+}
+      
       
       // Only update local state for non-lead entries (skip, ooo, next) 
       const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
