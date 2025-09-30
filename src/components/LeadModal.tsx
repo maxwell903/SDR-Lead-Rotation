@@ -102,10 +102,25 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
   // Get replacement options for the dropdown
   const replacementOptions = useMemo(() => 
+
+    
   buildReplacementOptions(replacementState, salesReps, { includeClosed: false }), 
   [replacementState, salesReps]
 );
-
+  const filteredReplacementOptions = useMemo(() => {
+  if (!replaceToggle) return [];
+  
+  // Determine the lane for the NEW lead being created
+  const newLeadLane = (formData.unitCount ?? 0) >= 1000 ? '1kplus' : 'sub1k';
+  const newLeadRepId = formData.assignedTo;
+  
+  // Filter replacement options to match BOTH lane AND sales rep
+  return replacementOptions.filter(opt => {
+    const laneMatches = opt.lane === newLeadLane;
+    const repMatches = opt.repId === newLeadRepId;
+    return laneMatches && repMatches;
+  });
+}, [replaceToggle, replacementOptions, formData.unitCount, formData.assignedTo]);
   // Date formatting helpers
   const formatDateDisplay = (date: Date) => {
     const today = new Date();
@@ -302,6 +317,63 @@ const LeadModal: React.FC<LeadModalProps> = ({
         return;
       }
     }
+    if (isEditing && editingEntry?.leadId) {
+      const originalLead = leads.find(l => l.id === editingEntry.leadId);
+      
+      if (originalLead && formData.unitCount !== null && formData.unitCount !== originalLead.unitCount) {
+        const oldUnitCount = originalLead.unitCount ?? 0;
+        const newUnitCount = formData.unitCount;
+        const oldLane = oldUnitCount >= 1000 ? '1kplus' : 'sub1k';
+        const newLane = newUnitCount >= 1000 ? '1kplus' : 'sub1k';
+        
+        // Check if lane changes (crosses 1000 threshold)
+        if (oldLane !== newLane) {
+          const direction = newUnitCount >= 1000 ? 'to 1000+' : 'below 1000';
+          alert(
+            `Cannot edit unit count across the 1000 threshold.\n\n` +
+            `This lead is currently in the ${oldLane} lane (${oldUnitCount} units).\n` +
+            `Changing it ${direction} would move it to the ${newLane} lane.\n\n` +
+            `Please delete this lead and create a new one with the correct unit count.`
+          );
+          return;
+        }
+        
+        // Additional validation: if still in sub1k lane, max is 999
+        if (newLane === 'sub1k' && newUnitCount >= 1000) {
+          alert(
+            `Unit count cannot be 1000 or higher for sub-1k leads.\n\n` +
+            `Maximum unit count for editing: 999\n` +
+            `Please delete and recreate with the correct unit count.`
+          );
+          return;
+        }
+        
+        // Additional validation: if still in 1kplus lane, min is 1000
+        if (newLane === '1kplus' && newUnitCount < 1000) {
+          alert(
+            `Unit count cannot be below 1000 for 1k+ leads.\n\n` +
+            `Minimum unit count for editing: 1000\n` +
+            `Please delete and recreate with the correct unit count.`
+          );
+          return;
+        }
+      }
+      
+      // NEW: Block sales rep changes when editing
+      if (originalLead && formData.assignedTo !== originalLead.assignedTo) {
+        const oldRepName = salesReps.find(r => r.id === originalLead.assignedTo)?.name || 'Unknown';
+        const newRepName = salesReps.find(r => r.id === formData.assignedTo)?.name || 'Unknown';
+        
+        alert(
+          `Cannot change the assigned sales rep when editing a lead.\n\n` +
+          `Current rep: ${oldRepName}\n` +
+          `Attempted change to: ${newRepName}\n\n` +
+          `To assign this lead to a different rep, please delete it and create a new lead with the correct assignment.`
+        );
+        return;
+      }
+    }
+
 
     
 
@@ -507,17 +579,33 @@ const LeadModal: React.FC<LeadModalProps> = ({
                         Choose a lead in need of replacement
                       </label>
                       <select
-                        className="w-full rounded-xl border-2 border-amber-300 px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 bg-white"
-                        value={originalLeadIdToReplace}
-                        onChange={(e) => setOriginalLeadIdToReplace(e.target.value)}
-                      >
-                        <option value="">— Select a lead to replace —</option>
-                        {replacementOptions.map(opt => (
-                          <option key={opt.leadId} value={opt.leadId}>
-                            {opt.accountNumber} - {opt.repName} ({new Date(opt.markedAt).toLocaleDateString()})
-                          </option>
-                        ))}
-                      </select>
+                      className="w-full rounded-xl border-2 border-amber-300 px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 bg-white"
+                      value={originalLeadIdToReplace}
+                      onChange={(e) => setOriginalLeadIdToReplace(e.target.value)}
+                    >
+                      <option value="">— Select a lead to replace —</option>
+                      {filteredReplacementOptions.length === 0 && replacementOptions.length > 0 && (
+                        <option disabled>No eligible leads (must match lane and sales rep)</option>
+                      )}
+                      {filteredReplacementOptions.map(opt => (
+                        <option key={opt.leadId} value={opt.leadId}>
+                          {opt.accountNumber} - {opt.repName} - {opt.lane} ({new Date(opt.markedAt).toLocaleDateString()})
+                        </option>
+                      ))}
+                    </select>
+                      {replaceToggle && filteredReplacementOptions.length === 0 && replacementOptions.length > 0 && (
+                        <div className="mt-2 text-xs text-amber-700 bg-amber-100 p-3 rounded-lg border border-amber-300">
+                          <strong>No eligible leads for replacement</strong>
+                          <p className="mt-1">
+                            To replace an MFR lead, the replacement must be:
+                          </p>
+                          <ul className="list-disc ml-4 mt-1">
+                            <li>In the same lane ({(formData.unitCount ?? 0) >= 1000 ? '1K+' : 'Sub-1K'})</li>
+                            <li>Assigned to the same rep ({salesReps.find(r => r.id === formData.assignedTo)?.name || 'Select a rep'})</li>
+                          </ul>
+                        </div>
+                      )}
+
                     </div>
                   )}
                 </div>

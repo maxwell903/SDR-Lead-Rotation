@@ -247,6 +247,62 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
       }
     }
 
+     // Validation: Block unit count changes that cross the 1000 threshold
+  if (formData.unitCount !== null && formData.unitCount !== editingLead.unitCount) {
+    const oldUnitCount = editingLead.unitCount ?? 0;
+    const newUnitCount = formData.unitCount;
+    const oldLane = oldUnitCount >= 1000 ? '1kplus' : 'sub1k';
+    const newLane = newUnitCount >= 1000 ? '1kplus' : 'sub1k';
+    
+    // Check if lane changes (crosses 1000 threshold)
+    if (oldLane !== newLane) {
+      const direction = newUnitCount >= 1000 ? 'to 1000+' : 'below 1000';
+      alert(
+        `Cannot edit unit count across the 1000 threshold.\n\n` +
+        `This lead is currently in the ${oldLane} lane (${oldUnitCount} units).\n` +
+        `Changing it ${direction} would move it to the ${newLane} lane.\n\n` +
+        `Please delete this lead and create a new one with the correct unit count.`
+      );
+      return;
+    }
+    
+    // Additional validation: if still in sub1k lane, max is 999
+    if (newLane === 'sub1k' && newUnitCount >= 1000) {
+      alert(
+        `Unit count cannot be 1000 or higher for sub-1k leads.\n\n` +
+        `Maximum unit count for editing: 999\n` +
+        `Please delete and recreate with the correct unit count.`
+      );
+      return;
+    }
+    
+    // Additional validation: if still in 1kplus lane, min is 1000
+    if (newLane === '1kplus' && newUnitCount < 1000) {
+      alert(
+        `Unit count cannot be below 1000 for 1k+ leads.\n\n` +
+        `Minimum unit count for editing: 1000\n` +
+        `Please delete and recreate with the correct unit count.`
+      );
+      return;
+    }
+  }
+
+  // DIFF: Add after the unit count validation block
+
+  // Validation: Block sales rep changes when editing
+  if (formData.assignedTo !== editingLead.assignedTo) {
+    const oldRepName = salesReps.find(r => r.id === editingLead.assignedTo)?.name || 'Unknown';
+    const newRepName = salesReps.find(r => r.id === formData.assignedTo)?.name || 'Unknown';
+    
+    alert(
+      `Cannot change the assigned sales rep when editing a lead.\n\n` +
+      `Current rep: ${oldRepName}\n` +
+      `Attempted change to: ${newRepName}\n\n` +
+      `To assign this lead to a different rep, please delete it and create a new lead with the correct assignment.`
+    );
+    return;
+  }
+
     setIsSubmitting(true);
     try {
       // Apply replacement mark/unmark first if toggled
