@@ -111,7 +111,7 @@ export class ReplacementService {
       .single();
 
     if (error) throw error;
-    
+    console.log('Replacement mark updated successfully:', { markId, replacedByLeadId }); // ADD THIS LINE
     // Store hit count for replacement lead (LRL = +1)
     try {
       const currentDate = new Date();
@@ -146,6 +146,8 @@ export class ReplacementService {
     .delete()
     .eq('id', markId);
   if (error) throw error;
+    console.log('Replacement mark deleted successfully:', markId); // ADD THIS LINE
+
 
   // 3) Compensating hit: Use MFR_UNMARK to return to NL status
   try {

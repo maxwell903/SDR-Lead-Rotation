@@ -47,31 +47,29 @@ export const useReplacementState = () => {
     }
   }, []);
 
-// IMPROVED: Set up real-time subscription with debouncing for replacement_marks table
+  // Set up real-time subscription for replacement_marks table
 useEffect(() => {
   loadReplacementMarks();
-
-  let timeoutId: NodeJS.Timeout;
   
   const channel = supabase
-    .channel('replacement_marks_changes')
+    .channel('replacement_marks_realtime')
     .on('postgres_changes', { 
       event: '*', 
       schema: 'public', 
       table: 'replacement_marks' 
     }, (payload) => {
-      console.log('Replacement marks changed:', payload);
-      
-      // FIXED: Debounce rapid changes to prevent race conditions
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        loadReplacementMarks();
-      }, 100); // 100ms debounce
+      console.log('Replacement marks changed - reloading:', payload);
+      // Immediate reload, no debouncing for instant updates
+      loadReplacementMarks();
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('Replacement marks real-time subscription active');
+      }
+    });
 
   return () => {
-    clearTimeout(timeoutId);
+    console.log('Cleaning up replacement marks subscription');
     supabase.removeChannel(channel);
   };
 }, [loadReplacementMarks]);

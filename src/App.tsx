@@ -394,7 +394,7 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
       leads: currentMonthLeads,
       entries: [...entriesFromDbLeads, ...nonLeadEntries] // Combine DB leads + local non-lead entries
     };
-  }, [monthlyData, monthKey, currentDate, dbLeads,]); // Added forceRefresh dependency
+  }, [monthlyData, monthKey, currentDate, dbLeads, replacementState]); // Add replacementState
 
   
 
@@ -432,7 +432,7 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
       next1kPlus,
       skips: skipCounts
     }));
-  }, [salesReps, monthKey, monthlyData, replacementState, ]); // Added forceRefresh dependency
+   }, [salesReps, currentMonthData, replacementState]); // UPDATED: Use currentMonthData instead of monthKey/monthlyData
 
   // 4) Render guards AFTER all hooks
   if (repsLoading) {
