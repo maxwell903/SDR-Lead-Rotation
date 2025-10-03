@@ -238,6 +238,17 @@ export function useLeads() {
     }
   }
 
+  /**
+   * Check if a lead can be deleted and get status information
+   */
+  const checkDeletionStatus = async (id: string) => {
+    try {
+      return await checkLeadDeletionStatus(id);
+    } catch (e: any) {
+      throw e;
+    }
+  }
+
   return {
     leads: state.leads,
     loading: state.loading,
@@ -249,5 +260,6 @@ export function useLeads() {
     updateLead,
     removeLead,
     removeLeads,
+    checkDeletionStatus,  // ← ADD THIS LINE
   }
 }

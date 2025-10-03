@@ -8,6 +8,7 @@ import ParametersPanel from './components/ParametersPanel';
 import { SalesRep, Lead, RotationState, LeadEntry, MonthData } from './types';
 import { useReplacementState } from './hooks/useReplacementState';
 import { createHitCount } from './services/hitCountsService';
+import RotationAlgorithmGuide from './components/RotationAlgorthimGuide';
 import {
   ReplacementState,
   createEmptyReplacementState,
@@ -99,6 +100,9 @@ const safeUpdateEntryInState = (
   newEntries[entryIndex] = updatedFullEntry;
   return newEntries;
 };
+
+
+
 
 const updateMonthlyDataSafely = (
   setMonthlyData: React.Dispatch<React.SetStateAction<{ [key: string]: any }>>,
@@ -341,6 +345,7 @@ export default function App() {
     undoReplacement: dbUndoReplacement,
   } = useReplacementState();
 
+  const [showAlgorithmGuide, setShowAlgorithmGuide] = useState(false);
   const [showLeadModal, setShowLeadModal] = useState(false);
   const [showEditLeadModal, setShowEditLeadModal] = useState(false);
 const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -367,6 +372,8 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
       lead.month === currentDate.getMonth() + 1 && 
       lead.year === currentDate.getFullYear()
     );
+
+ 
     
     // Always reconstruct entries from DB leads
     const entriesFromDbLeads: LeadEntry[] = currentMonthLeads.map(lead => ({
@@ -617,10 +624,21 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 };
 
 
-  const handleAddLead = async (leadData: any) => {
-  const month = currentDate.getMonth();
-  const year = currentDate.getFullYear();
-  const monthKey = `${year}-${month}`;
+// In App.tsx, find the handleAddLead function and replace it with this fixed version:
+
+const handleAddLead = async (leadData: any) => {
+  // FIXED: Extract month/year from the ACTUAL selected date, not the current viewing month
+  const selectedDate = leadData.day !== undefined && leadData.month !== undefined && leadData.year !== undefined
+    ? new Date(leadData.year, leadData.month, leadData.day)
+    : new Date();
+  
+  const leadMonth = selectedDate.getMonth();
+  const leadYear = selectedDate.getFullYear();
+  
+  // Use current viewing month for local state management
+  const viewingMonth = currentDate.getMonth();
+  const viewingYear = currentDate.getFullYear();
+  const monthKey = `${viewingYear}-${viewingMonth}`;
 
   // Handle updates to existing entries
   if (leadData.isEditing && leadData.editingEntryId) {
@@ -630,72 +648,70 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 
   // Handle non-lead entries (skip, ooo, next) - keep in local state only
   if (leadData.type && leadData.type !== 'lead') {
-  const newEntry: LeadEntry = {
-    id: generateUniqueId('nonlead'),
-    day: selectedCell?.day || new Date().getDate(),
-    repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
-    type: leadData.type,
-    value: leadData.type.toUpperCase(),
-    url: undefined,
-    comments: [],
-    month,
-    year,
-    unitCount: undefined,
-    rotationTarget: leadData.rotationTarget || 'both',
-    propertyTypes: leadData.propertyTypes || [],
-  };
-  
-  // Use safe state update to prevent duplicates
-  updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
-    const duplicate = checkForDuplicateEntry(entries, newEntry);
-    if (duplicate) {
-      alert(`A ${leadData.type.toUpperCase()} entry already exists for ${salesReps.find(r => r.id === newEntry.repId)?.name || 'this rep'} on day ${newEntry.day}`);
-      throw new Error('Duplicate entry prevented');
-    }
-    return safeAddEntryToState(entries, newEntry);
-  });
-
-  // Store hit count for skip entries (SKIP = +1)
-  if (leadData.type === 'skip') {
-    try {
-      // Determine lane based on rotationTarget or default to both lanes
-      const lanes = leadData.rotationTarget === 'over1k' ? ['1kplus'] : 
-                   leadData.rotationTarget === 'sub1k' ? ['sub1k'] : 
-                   ['sub1k', '1kplus']; // both lanes
-      
-      for (const lane of lanes) {
-        await createHitCount({
-          repId: newEntry.repId,
-          hitType: 'SKIP',
-          hitValue: 1,
-          lane: lane as any,
-          month: month + 1,
-          year
-        });
+    const newEntry: LeadEntry = {
+      id: generateUniqueId('nonlead'),
+      day: selectedCell?.day || new Date().getDate(),
+      repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
+      type: leadData.type,
+      value: leadData.type.toUpperCase(),
+      url: undefined,
+      comments: [],
+      month: viewingMonth,
+      year: viewingYear,
+      unitCount: undefined,
+      rotationTarget: leadData.rotationTarget || 'both',
+      propertyTypes: leadData.propertyTypes || [],
+    };
+    
+    // Use safe state update to prevent duplicates
+    updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
+      const duplicate = checkForDuplicateEntry(entries, newEntry);
+      if (duplicate) {
+        alert(`A ${leadData.type.toUpperCase()} entry already exists for ${salesReps.find(r => r.id === newEntry.repId)?.name || 'this rep'} on day ${newEntry.day}`);
+        throw new Error('Duplicate entry prevented');
       }
-    } catch (hitError) {
-      console.error('Failed to store hit count for skip:', hitError);
-      // Don't fail the skip creation if hit count storage fails
+      return safeAddEntryToState(entries, newEntry);
+    });
+
+    // Store hit count for skip entries (SKIP = +1)
+    if (leadData.type === 'skip') {
+      try {
+        // Determine lane based on rotationTarget or default to both lanes
+        const lanes = leadData.rotationTarget === 'over1k' ? ['1kplus'] : 
+                     leadData.rotationTarget === 'sub1k' ? ['sub1k'] : 
+                     ['sub1k', '1kplus']; // both lanes
+        
+        for (const lane of lanes) {
+          await createHitCount({
+            repId: newEntry.repId,
+            hitType: 'SKIP',
+            hitValue: 1,
+            lane: lane as any,
+            month: viewingMonth + 1, // For skips, use viewing month
+            year: viewingYear
+          });
+        }
+      } catch (hitError) {
+        console.error('Failed to store hit count for skip:', hitError);
+        // Don't fail the skip creation if hit count storage fails
+      }
+      
+      updateRotationAfterAssignment(newEntry.repId, false, true);
     }
     
-    updateRotationAfterAssignment(newEntry.repId, false, true);
+    setShowLeadModal(false);
+    setSelectedCell(null);
+    return;
   }
-  
-  setShowLeadModal(false);
-  setSelectedCell(null);
-  return;
-}
-
 
   // Handle lead assignment with enhanced duplicate prevention
   let assignedRepId = leadData.assignedTo;
 
- // Helper: look up a sales rep's display name by id (no hooks inside handlers)
+  // Helper: look up a sales rep's display name by id (no hooks inside handlers)
   const getSalesRepName = (repId: string) => {
     const rep = salesReps.find(r => r.id === repId);
     return rep ? rep.name : 'Unknown Rep';
   };
-
 
   // REPLACEMENT VALIDATION: If replacing a lead, ensure assigned rep matches original
   if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
@@ -706,7 +722,6 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     }
     assignedRepId = originalAssignment?.repId || assignedRepId;
   }
-
 
   if (!assignedRepId) {
     assignedRepId = getNextInRotation(leadData);
@@ -738,30 +753,28 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     alert(`A lead with account number "${accountNumber}" already exists this month in database`);
     return;
   }
-  
-  
 
   try {
     // Mark operation as active
     setActiveSaveOperations(prev => new Set(prev).add(operationId));
     console.log('Starting save operation:', operationId);
 
-    
     // Add loading state for all lead operations
     setIsDbLoading(true);
-    setDbLoadingMessage(leadData.replaceToggle ? 'Creating replacement lead...' : 'Saving lead...');
+    setDbLoadingMessage(leadData.replaceToggle ? 
+      'Creating replacement lead...' : 'Saving lead...');
 
-    // Save lead to database and capture the created row
+    // FIXED: Save lead with the ACTUAL selected date and its month/year
     const newLead = await addLead({
       accountNumber: leadData.accountNumber,
       url: leadData.url,
       propertyTypes: leadData.propertyTypes,
       unitCount: leadData.unitCount,
       assignedTo: assignedRepId,
-      date: new Date(),
-     comments: leadData.comments || [],
-      month: month + 1, // DB stores 1-12
-      year
+      date: selectedDate, // ← FIXED: Use actual selected date
+      comments: leadData.comments || [],
+      month: leadMonth + 1, // ← FIXED: Use selected month (DB stores 1-12)
+      year: leadYear // ← FIXED: Use selected year
     });
     console.log('Lead saved successfully:', newLead.id);
 
@@ -773,7 +786,7 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     }
 
     // Hit count for normal leads (NL) is now created inside createLead (via leadsService)
-    // No manual hit creation needed here anymore
+    // The hit count will use the lead's month/year, which are now correct!
     
     // Database subscription will handle UI updates
     setShowLeadModal(false);
@@ -799,6 +812,8 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     setDbLoadingMessage('');
   }
 };
+
+  
 
   const handleCellClick = (day: number, repId: string) => {
     setSelectedCell({ day, repId });
@@ -1066,6 +1081,11 @@ const handleDeleteLead = async (leadId: string) => {
     }
   };
 
+     // ADD THIS FUNCTION (if it's missing or in the wrong place):
+  const handleOpenAlgorithm = () => {
+    setShowAlgorithmGuide(true);
+  };
+
  
 
 
@@ -1200,7 +1220,12 @@ const handleRemoveReplacementMark = async (leadId: string) => {
           </div>
           
           <div className="space-y-6">
-            <RotationPanelMK2 salesReps={salesReps} />
+            <RotationPanelMK2 
+            viewingMonth={currentDate.getMonth()}
+  viewingYear={currentDate.getFullYear()}
+  onOpenAlgorithm={handleOpenAlgorithm}
+            salesReps={salesReps} 
+            />
           </div>
         </div>
       </div>
@@ -1266,12 +1291,30 @@ const handleRemoveReplacementMark = async (leadId: string) => {
           onClose={() => setShowParameters(false)}
         />
       )}
+
+      {showAlgorithmGuide && (
+  <RotationAlgorithmGuide 
+    isOpen={showAlgorithmGuide}
+    onClose={() => setShowAlgorithmGuide(false)}
+    salesReps={salesReps}
+    leads={currentMonthData.leads}
+    leadEntries={currentMonthData.entries}
+    replacementState={replacementState}
+    baseOrderSub1k={salesReps
+      .filter(rep => rep.status === 'active')
+      .sort((a, b) => a.sub1kOrder - b.sub1kOrder)
+      .map(rep => rep.id)
+    }
+    baseOrder1kPlus={salesReps
+      .filter(rep => rep.status === 'active' && rep.parameters.canHandle1kPlus)
+      .sort((a, b) => (a.over1kOrder || 999) - (b.over1kOrder || 999))
+      .map(rep => rep.id)
+    }
+    lrlCountsAsZero={false}
+  />
+)}
       
     </div>
     </AuthWrapper>
   );
   }
-
-function refresh() {
-  throw new Error('Function not implemented.');
-}

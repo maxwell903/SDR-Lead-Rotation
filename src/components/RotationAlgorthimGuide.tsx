@@ -3,14 +3,12 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { X, ChevronLeft, ChevronRight, Info } from 'lucide-react';
 import type { Lane } from '../utils/rotationMath';
 import { useHitCounts } from '../hooks/useHitCounts';
+import type { Lead, LeadEntry, SalesRep } from '../types';
+import type { ReplacementState } from '../features/leadReplacement';
 import {
   auditEntriesForLane,
   countHits,
   generateRotationSequence,
-  type Lead,
-  type LeadEntry,
-  type ReplacementState,
-  type SalesRep,
 } from '../utils/rotationMath';
 
 type Props = {

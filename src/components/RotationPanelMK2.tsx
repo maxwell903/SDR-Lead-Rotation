@@ -15,6 +15,8 @@ interface ReplacementLead {
 
 interface RotationPanelMK2Props {
   salesReps: SalesRep[];
+  viewingMonth: number; 
+  viewingYear: number;  
   onOpenAlgorithm?: () => void;
 }
 
@@ -31,6 +33,8 @@ interface RotationItem {
 
 const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({ 
   salesReps, 
+  viewingMonth,
+  viewingYear,
   onOpenAlgorithm 
 }) => {
   const [hitsSub1k, setHitsSub1k] = useState<Map<string, number>>(new Map());
@@ -41,22 +45,21 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
   const [expanded1kPlus, setExpanded1kPlus] = useState(false);
   const [loading, setLoading] = useState(true);
   
-  const currentDate = new Date();
-  const month = currentDate.getMonth() + 1;
-  const year = currentDate.getFullYear();
+  const month = viewingMonth + 1; // Convert from 0-based to 1-based
+  const year = viewingYear;
 
-  // Load hit counts from database
   const loadHitCounts = useCallback(async () => {
-    try {
-      const sub1kHits = await getNetHitCounts({ lane: 'sub1k', month, year });
-      const over1kHits = await getNetHitCounts({ lane: '1kplus', month, year });
-      
-      setHitsSub1k(sub1kHits);
-      setHits1kPlus(over1kHits);
-    } catch (error) {
-      console.error('Error loading hit counts:', error);
-    }
-  }, [month, year]);
+  try {
+    // Don't pass month/year to get cumulative hits from all time
+    const sub1kHits = await getNetHitCounts({ lane: 'sub1k' });
+    const over1kHits = await getNetHitCounts({ lane: '1kplus' });
+    
+    setHitsSub1k(sub1kHits);
+    setHits1kPlus(over1kHits);
+  } catch (error) {
+    console.error('Error loading hit counts:', error);
+  }
+}, []);
   
   const loadReplacementMarks = useCallback(async () => {
     try {

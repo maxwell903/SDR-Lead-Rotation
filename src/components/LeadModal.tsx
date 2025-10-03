@@ -5,6 +5,7 @@ import {
   buildReplacementOptions,
 } from '../features/leadReplacement';
 import { SalesRep, LeadEntry, RotationState, MonthData } from '../types';
+import { DatePicker } from './DatePicker';
 
 interface LeadModalProps {
   onClose: () => void;
@@ -122,22 +123,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
   });
 }, [replaceToggle, replacementOptions, formData.unitCount, formData.assignedTo]);
   // Date formatting helpers
-  const formatDateDisplay = (date: Date) => {
-    const today = new Date();
-    const isToday = date.toDateString() === today.toDateString();
-    return isToday ? 'Today' : date.toLocaleDateString('en-US', { 
-      month: 'numeric', 
-      day: 'numeric', 
-      year: 'numeric' 
-    });
-  };
+  
 
-  const formatDateForInput = (date: Date) => {
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const day = date.getDate().toString().padStart(2, '0');
-    const year = date.getFullYear();
-    return `${month}/${day}/${year}`;
-  };
+  
 
   // Get sales rep name helper
   const getSalesRepName = (repId: string) => {
@@ -448,21 +436,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
     }));
   };
 
-  const handleDateChange = (dateString: string) => {
-    const parts = dateString.split('/');
-    if (parts.length === 3) {
-      const month = parseInt(parts[0]) - 1;
-      const day = parseInt(parts[1]);
-      const year = parseInt(parts[2]);
-      
-      if (!isNaN(month) && !isNaN(day) && !isNaN(year)) {
-        const newDate = new Date(year, month, day);
-        if (newDate.getFullYear() === year && newDate.getMonth() === month && newDate.getDate() === day) {
-          setFormData(prev => ({ ...prev, date: newDate }));
-        }
-      }
-    }
-  };
+  
 
   // Get position number for rep in rotation
   const getRepPositionInRotation = (repId: string) => {
@@ -728,37 +702,15 @@ const LeadModal: React.FC<LeadModalProps> = ({
               )}
             </div>
 
-            {/* 8. Date Picker */}
             <div className="md:col-span-1">
-              <label className="block text-sm font-bold text-gray-700 mb-3">Date*</label>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowDatePicker(!showDatePicker)}
-                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50 flex justify-between items-center text-left"
-                >
-                  <span className="text-gray-700 font-medium">
-                    Date: {formatDateDisplay(formData.date)}
-                  </span>
-                  <Calendar className="w-5 h-5 text-gray-500" />
-                </button>
-
-                {showDatePicker && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10 p-4">
-                    <input
-                      type="text"
-                      value={formatDateForInput(formData.date)}
-                      onChange={(e) => handleDateChange(e.target.value)}
-                      placeholder="MM/DD/YYYY"
-                      className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    />
-                    <div className="mt-2 text-xs text-gray-500">
-                      Enter date in MM/DD/YYYY format
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+  <label className="block text-sm font-bold text-gray-700 mb-3">Date*</label>
+  <DatePicker
+    value={formData.date}
+    onChange={(newDate) => setFormData(prev => ({ ...prev, date: newDate }))}
+    minDate={new Date(2000, 0, 1)}
+    maxDate={new Date(2099, 11, 31)}
+  />
+</div>
 
             {/* Comments (FULL WIDTH) */}
             <div className="md:col-span-2">
