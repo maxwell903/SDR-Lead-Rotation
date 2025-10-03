@@ -89,48 +89,55 @@ export class ReplacementService {
   return dbToAppFormat(data);
 }
 
-  // Update replacement mark (apply replacement)
+
   static async updateReplacementMark(markId: string, replacedByLeadId: string): Promise<ReplacementRecord> {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('User not authenticated');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+  
+  console.log('Updating replacement mark:', {
+    markId,
+    replacedByLeadId,
+    userId: user.id
+  });
+
+  const { data, error } = await supabase
+    .from('replacement_marks')
+    .update({ 
+      replaced_by_lead_id: replacedByLeadId,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', markId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  console.log('Replacement mark updated successfully:', { markId, replacedByLeadId });
+  
+  // 🚨 CRITICAL: Store hit count for replacement lead (LRL = 0)
+  // DO NOT pass leadEntryId - this is a lead-level hit, not an entry-level hit
+  try {
+    const currentDate = new Date();
+    console.log('🔵 Creating LRL hit count with value 0');
     
-    console.log('Updating replacement mark:', {
-      markId,
-      replacedByLeadId,
-      userId: user.id
+    await createHitCount({
+      repId: data.rep_id,
+      // ✅ DO NOT pass leadEntryId at all
+      hitType: 'LRL',
+      hitValue: 0,  // 🚨 CRITICAL: LRL must be 0, not 1
+      lane: data.lane === '1kplus' ? '1kplus' : 'sub1k',
+      month: currentDate.getMonth() + 1,
+      year: currentDate.getFullYear()
     });
-
-    const { data, error } = await supabase
-      .from('replacement_marks')
-      .update({ 
-        replaced_by_lead_id: replacedByLeadId,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', markId)
-      .select()
-      .single();
-
-    if (error) throw error;
-    console.log('Replacement mark updated successfully:', { markId, replacedByLeadId }); // ADD THIS LINE
-    // Store hit count for replacement lead (LRL = +1)
-    try {
-      const currentDate = new Date();
-      await createHitCount({
-        repId: data.rep_id,
-        leadEntryId: replacedByLeadId,
-        hitType: 'LRL',
-        hitValue: 1,
-        lane: data.lane === '1kplus' ? '1kplus' : 'sub1k',
-        month: currentDate.getMonth() + 1,
-        year: currentDate.getFullYear()
-      });
-    } catch (hitError) {
-      console.error('Failed to store hit count for LRL:', hitError);
-      // Don't fail the replacement if hit count storage fails
-    }
     
-    return dbToAppFormat(data);
+    console.log('✅ LRL hit recorded with 0 value');
+  } catch (hitError) {
+    console.error('Failed to store LRL hit count:', hitError);
+    // Don't throw - the mark was already updated successfully
   }
+  
+  return dbToAppFormat(data);
+}
+  
   static async deleteReplacementMark(markId: string): Promise<void> {
   // 1) Read the mark we're about to remove
   const { data: mark, error: fetchError } = await supabase

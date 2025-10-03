@@ -319,7 +319,15 @@ const initialReps: SalesRep[] = [
 export default function App() {
   // 1) All hooks at the top – never behind conditionals or early returns
   const { salesReps, loading: repsLoading, error: repsError, updateSalesReps } = useSalesReps();
-  const { leads: dbLeads, loading: leadsLoading, addLead, updateLead, removeLead, checkDeletionStatus } = useLeads();
+  const { 
+  leads: dbLeads, 
+  loading: leadsLoading, 
+  addLead,
+  addLeadWithReplacement,  // ← ADD THIS LINE
+  updateLead, 
+  removeLead, 
+  checkDeletionStatus 
+} = useLeads();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [monthlyData, setMonthlyData] = useState<{ [key: string]: MonthData }>({});
   const [rotationState, setRotationState] = useState<RotationState>({
@@ -627,6 +635,10 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
 // In App.tsx, find the handleAddLead function and replace it with this fixed version:
 
 const handleAddLead = async (leadData: any) => {
+  // Generate unique operation ID for tracking
+  const operationId = generateUniqueId('save_lead');
+  setActiveSaveOperations(prev => new Set(prev).add(operationId));
+
   // FIXED: Extract month/year from the ACTUAL selected date, not the current viewing month
   const selectedDate = leadData.day !== undefined && leadData.month !== undefined && leadData.year !== undefined
     ? new Date(leadData.year, leadData.month, leadData.day)
@@ -678,116 +690,88 @@ const handleAddLead = async (leadData: any) => {
       try {
         // Determine lane based on rotationTarget or default to both lanes
         const lanes = leadData.rotationTarget === 'over1k' ? ['1kplus'] : 
-                     leadData.rotationTarget === 'sub1k' ? ['sub1k'] : 
-                     ['sub1k', '1kplus']; // both lanes
+                     leadData.rotationTarget === 'sub1k' ? ['sub1k'] :
+                     ['sub1k', '1kplus'];
         
         for (const lane of lanes) {
           await createHitCount({
             repId: newEntry.repId,
             hitType: 'SKIP',
             hitValue: 1,
-            lane: lane as any,
-            month: viewingMonth + 1, // For skips, use viewing month
-            year: viewingYear
+            lane: lane as 'sub1k' | '1kplus',
+            month: viewingMonth + 1,
+            year: viewingYear,
           });
         }
-      } catch (hitError) {
-        console.error('Failed to store hit count for skip:', hitError);
-        // Don't fail the skip creation if hit count storage fails
+      } catch (e) {
+        console.error('Failed to record SKIP hit:', e);
       }
+
+      // Update skip counts
+      const newSkipCounts: { [repId: string]: number } = { ...rotationState.skips };
+      newSkipCounts[newEntry.repId] = (newSkipCounts[newEntry.repId] || 0) + 1;
       
-      updateRotationAfterAssignment(newEntry.repId, false, true);
+      setRotationState(prev => ({
+        ...prev,
+        skips: newSkipCounts
+      }));
     }
-    
+
     setShowLeadModal(false);
     setSelectedCell(null);
     return;
   }
 
-  // Handle lead assignment with enhanced duplicate prevention
-  let assignedRepId = leadData.assignedTo;
-
-  // Helper: look up a sales rep's display name by id (no hooks inside handlers)
-  const getSalesRepName = (repId: string) => {
-    const rep = salesReps.find(r => r.id === repId);
-    return rep ? rep.name : 'Unknown Rep';
-  };
-
-  // REPLACEMENT VALIDATION: If replacing a lead, ensure assigned rep matches original
-  if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-    const originalAssignment = getReplacementAssignment(leadData.originalLeadIdToReplace);
-    if (originalAssignment && originalAssignment.repId !== assignedRepId) {
-      alert(`Replacement lead must be assigned to the same rep as the original lead: ${getSalesRepName(originalAssignment.repId)}`);
-      return;
-    }
-    assignedRepId = originalAssignment?.repId || assignedRepId;
-  }
+  // Handle LEAD entries - save to database
+  const assignedRepId = leadData.assignedTo || selectedCell?.repId || salesReps[0]?.id;
 
   if (!assignedRepId) {
-    assignedRepId = getNextInRotation(leadData);
-  }
-
-  if (!assignedRepId) {
-    alert('No eligible sales rep found for this lead');
-    return;
-  }
-
-  // Create unique operation ID to prevent race conditions
-  const operationId = `${leadData.accountNumber}-${assignedRepId}-${Date.now()}`;
-  
-  // Check if this operation is already in progress
-  if (activeSaveOperations.has(operationId)) {
-    console.log('Save operation already in progress for this lead:', operationId);
-    return;
-  }
-
-  // ENHANCED: Check for duplicates in both DB leads and local entries
-  const accountNumber = leadData.accountNumber.trim();
-  
-  // Check current month DB leads
-  const existingDbLead = currentMonthData.leads?.find(
-    lead => lead.accountNumber.trim().toLowerCase() === accountNumber.toLowerCase()
-  );
-  
-  if (existingDbLead) {
-    alert(`A lead with account number "${accountNumber}" already exists this month in database`);
+    alert('No sales rep selected');
     return;
   }
 
   try {
-    // Mark operation as active
-    setActiveSaveOperations(prev => new Set(prev).add(operationId));
-    console.log('Starting save operation:', operationId);
-
-    // Add loading state for all lead operations
+    // Determine if this is a replacement lead
+    const isReplacementLead = leadData.replaceToggle && leadData.originalLeadIdToReplace;
+    
     setIsDbLoading(true);
-    setDbLoadingMessage(leadData.replaceToggle ? 
-      'Creating replacement lead...' : 'Saving lead...');
+    setDbLoadingMessage(isReplacementLead ? 'Creating replacement lead...' : 'Saving lead...');
 
-    // FIXED: Save lead with the ACTUAL selected date and its month/year
-    const newLead = await addLead({
-      accountNumber: leadData.accountNumber,
-      url: leadData.url,
-      propertyTypes: leadData.propertyTypes,
-      unitCount: leadData.unitCount,
-      assignedTo: assignedRepId,
-      date: selectedDate, // ← FIXED: Use actual selected date
-      comments: leadData.comments || [],
-      month: leadMonth + 1, // ← FIXED: Use selected month (DB stores 1-12)
-      year: leadYear // ← FIXED: Use selected year
-    });
-    console.log('Lead saved successfully:', newLead.id);
-
-    // Replacement flow: link the new lead to the marked original
-    if (leadData.replaceToggle && leadData.originalLeadIdToReplace) {
-      setDbLoadingMessage('Applying replacement...');
-      await dbApplyReplacement(leadData.originalLeadIdToReplace, newLead);
-      // Hit count for LRL is now created inside updateReplacementMark (via replacementService)
+    let newLead: Lead;
+    
+    // FIXED: Use different functions based on lead type
+    if (isReplacementLead) {
+      // For LRL: use addLeadWithReplacement (creates lead + applies replacement with LRL 0)
+      newLead = await addLeadWithReplacement({
+        accountNumber: leadData.accountNumber,
+        url: leadData.url,
+        propertyTypes: leadData.propertyTypes,
+        unitCount: leadData.unitCount,
+        assignedTo: assignedRepId,
+        date: selectedDate,
+        comments: leadData.comments || [],
+        month: leadMonth + 1,
+        year: leadYear
+      }, leadData.originalLeadIdToReplace);
+      
+      console.log('Replacement lead created successfully:', newLead.id);
+    } else {
+      // For normal leads: use addLead (creates lead with NL +1)
+      newLead = await addLead({
+        accountNumber: leadData.accountNumber,
+        url: leadData.url,
+        propertyTypes: leadData.propertyTypes,
+        unitCount: leadData.unitCount,
+        assignedTo: assignedRepId,
+        date: selectedDate,
+        comments: leadData.comments || [],
+        month: leadMonth + 1,
+        year: leadYear
+      });
+      
+      console.log('Normal lead created successfully:', newLead.id);
     }
 
-    // Hit count for normal leads (NL) is now created inside createLead (via leadsService)
-    // The hit count will use the lead's month/year, which are now correct!
-    
     // Database subscription will handle UI updates
     setShowLeadModal(false);
     setSelectedCell(null);
@@ -914,17 +898,17 @@ if (entry?.type === 'lead' && entry.leadId) {
      // - Else (normal lead) -> NL -1
      // NOTE: OPEN MFR deletion is now blocked above, so no need for MFR 0 logic
      const hitType = isReplacementLead ? 'LRL' : 'NL';
-     const hitValue = -1;
+const hitValue = isReplacementLead ? 0 : -1;  // 🚨 LRL = 0, NL = -1
 
-     await createHitCount({
-       repId: entry.repId,
-       // lead_entry_id intentionally omitted => will be NULL in DB (as in your example)
-       hitType,
-       hitValue,
-       lane,
-       month: currentDate.getMonth() + 1,
-       year: currentDate.getFullYear(),
-     });
+await createHitCount({
+  repId: entry.repId,
+  // DON'T pass leadEntryId for lead-level hits
+  hitType,
+  hitValue,
+  lane,
+  month: currentDate.getMonth() + 1,
+  year: currentDate.getFullYear(),
+});
 
      await removeLead(entry.leadId);
      

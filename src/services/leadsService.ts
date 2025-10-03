@@ -105,7 +105,6 @@ export async function createLead(
 }
 
 /** CREATE LRL lead with replacement relationship */
-  /** CREATE LRL lead with replacement relationship */
 export async function createLeadWithReplacement(
   input: Omit<Lead, 'id'> & { id?: string },
   originalLeadIdToReplace: string
@@ -113,7 +112,14 @@ export async function createLeadWithReplacement(
   const id = input.id ?? `lead_${Date.now()}`
   const newLead: Lead = { ...input, id }
   
-  // Create the new lead first (without hit count - it will be added when we apply replacement)
+  console.log('🔵 START: createLeadWithReplacement', {
+    newLeadId: id,
+    originalLeadId: originalLeadIdToReplace
+  });
+  
+  // 🚨 CRITICAL: Insert lead WITHOUT creating a hit count
+  // Do NOT call createLead() - insert directly to avoid NL +1
+  console.log('🔵 Step 1: Inserting lead into database (NO HIT COUNT)');
   const { data, error } = await supabase
     .from('leads')
     .insert(leadToRow(newLead))
@@ -121,34 +127,35 @@ export async function createLeadWithReplacement(
     .single()
   
   if (error) throw error
+  console.log('✅ Lead inserted successfully:', data.id);
   
   const created = rowToLead(data as DBLeadRow)
   
   // Apply the replacement relationship
   try {
+    console.log('🔵 Step 2: Finding replacement mark');
     // Find the replacement mark for the original lead
     const { data: markData, error: markError } = await supabase
       .from('replacement_marks')
-      .select('id')
+      .select('id, lane')
       .eq('lead_id', originalLeadIdToReplace)
       .single()
     
     if (markError) throw markError
     if (!markData) throw new Error('Original lead not marked for replacement')
     
+    console.log('✅ Found replacement mark:', markData.id, 'lane:', markData.lane);
+    console.log('🔵 Step 3: Updating replacement mark (THIS WILL CREATE LRL 0)');
+    
     // Update the replacement mark with the new lead ID
-    // Update the replacement mark with the new lead ID
-    // This now creates the LRL hit count inside updateReplacementMark
+    // This will create the LRL 0 hit count inside updateReplacementMark
     await ReplacementService.updateReplacementMark(markData.id, created.id)
     
-    console.log('LRL replacement applied successfully:', {
-      originalLeadId: originalLeadIdToReplace,
-      newLeadId: created.id,
-      markId: markData.id
-    })
+    console.log('✅ LRL 0 hit count created');
+    console.log('✅ END: createLeadWithReplacement complete');
     
   } catch (replacementError) {
-    console.error('Error applying replacement:', replacementError)
+    console.error('❌ Error applying replacement:', replacementError)
     // Rollback the lead creation if replacement fails
     await supabase.from('leads').delete().eq('id', created.id)
     throw new Error('Failed to create replacement relationship')
@@ -229,33 +236,30 @@ if (isRepTransfer || isLaneChange) {
   const updated = rowToLead(data as DBLeadRow)
 
 // NEW: Handle lane change with hit compensation (unit count crossed 1000 threshold)
+// Handle lane change with hit compensation
 if (isLaneChange) {
   const now = new Date()
-  const repId = oldLead.assignedTo // Same rep, just different lane
+  const repId = oldLead.assignedTo
   
   console.log(`Lane change detected for lead ${id}: ${oldLane} -> ${newLane} (type: ${leadType})`)
   
   try {
-    // Step 1: Remove hit from old lane
-    // For MFR: was -1, so reverse it with +1
-    // For LRL/NL: was +1, so reverse it with -1
     const oldHitValue = leadType === 'MFR' ? -1 : 1
     await createHitCount({
       repId,
-      leadEntryId: id,
+      // ❌ REMOVED: leadEntryId: id,
       hitType: leadType,
-      hitValue: -oldHitValue, // Reverse the old hit
+      hitValue: -oldHitValue,
       lane: oldLane as 'sub1k' | '1kplus',
       month: now.getMonth() + 1,
       year: now.getFullYear(),
     })
     
-    // Step 2: Add hit to new lane
     await createHitCount({
       repId,
-      leadEntryId: id,
+      // ❌ REMOVED: leadEntryId: id,
       hitType: leadType,
-      hitValue: oldHitValue, // Apply same hit value to new lane
+      hitValue: oldHitValue,
       lane: newLane as 'sub1k' | '1kplus',
       month: now.getMonth() + 1,
       year: now.getFullYear(),
@@ -264,6 +268,44 @@ if (isLaneChange) {
     console.log(`Successfully moved ${leadType} hit from ${oldLane} to ${newLane}`)
   } catch (hitError) {
     console.error('Failed to write hit compensation for lane change:', hitError)
+  }
+}
+
+// Handle rep transfer with hit compensation
+if (isRepTransfer) {
+  const now = new Date()
+  const oldRepId = oldLead.assignedTo
+  const newRepId = updated.assignedTo
+  const units = updated.unitCount ?? 0
+  const lane: 'sub1k' | '1kplus' = units >= 1000 ? '1kplus' : 'sub1k'
+  
+  console.log(`Transferring lead ${id} from ${oldRepId} to ${newRepId} (type: ${leadType})`)
+  
+  try {
+    const oldHitValue = leadType === 'MFR' ? -1 : leadType === 'LRL' ? 0 : 1
+    await createHitCount({
+      repId: oldRepId,
+      // ❌ REMOVED: leadEntryId: id,
+      hitType: leadType,
+      hitValue: -oldHitValue,
+      lane,
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
+    })
+    
+    await createHitCount({
+      repId: newRepId,
+      // ❌ REMOVED: leadEntryId: id,
+      hitType: leadType,
+      hitValue: oldHitValue,
+      lane,
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
+    })
+    
+    console.log(`Successfully transferred ${leadType} hit from ${oldRepId} to ${newRepId}`)
+  } catch (hitError) {
+    console.error('Failed to write hit compensation for rep transfer:', hitError)
   }
 }
 
@@ -536,44 +578,41 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
       const isMFR = hasReplacementData && !hasReplacementData.replaced_by_lead_id;
       const isLRL = isReplacementData;
       
-      if (isLRL) {
-        // This lead was an LRL – negate its previous +1
-        console.log('Deleting LRL lead - compensating with LRL -1');
-        await createHitCount({
-          repId,
-          leadEntryId: leadId,
-          hitType: 'LRL',
-          hitValue: -1,
-          lane,
-          month: now.getMonth() + 1,
-          year:  now.getFullYear(),
-        });
-      } else if (isMFR) {
-        // This lead is marked as MFR (not yet replaced) - send hit_value: 0
-        // User wants explicit 0 record for DELETE MFR for audit purposes
-        console.log('Deleting MFR lead - recording MFR 0 for audit');
-        await createHitCount({
-          repId,
-          leadEntryId: leadId,
-          hitType: 'MFR',
-          hitValue: 0,
-          lane,
-          month: now.getMonth() + 1,
-          year: now.getFullYear(),
-        });
-      } else {
-        // Normal counted lead (NL) — negate its previous +1
-        console.log('Deleting NL lead - compensating with NL -1');
-        await createHitCount({
-          repId,
-          leadEntryId: leadId,
-          hitType: 'NL',
-          hitValue: -1,
-          lane,
-          month: now.getMonth() + 1,
-          year:  now.getFullYear(),
-        });
-      }
+      // Around line where you handle deletion hits
+if (isLRL) {
+  console.log('Deleting LRL lead - recording LRL 0 (no rotation impact)');
+  await createHitCount({
+    repId,
+    // ❌ REMOVED: leadEntryId: leadId,
+    hitType: 'LRL',
+    hitValue: 0,
+    lane,
+    month: now.getMonth() + 1,
+    year: now.getFullYear(),
+  });
+} else if (isMFR) {
+  console.log('Deleting MFR lead - recording MFR 0 for audit');
+  await createHitCount({
+    repId,
+    // ❌ REMOVED: leadEntryId: leadId,
+    hitType: 'MFR',
+    hitValue: 0,
+    lane,
+    month: now.getMonth() + 1,
+    year: now.getFullYear(),
+  });
+} else {
+  console.log('Deleting NL lead - compensating with NL -1');
+  await createHitCount({
+    repId,
+    // ❌ REMOVED: leadEntryId: leadId,
+    hitType: 'NL',
+    hitValue: -1,
+    lane,
+    month: now.getMonth() + 1,
+    year:  now.getFullYear(),
+  });
+}
     } catch (compErr) {
       console.error('Failed to write compensating hit on lead delete:', compErr);
     }

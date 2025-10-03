@@ -42,7 +42,6 @@ const rowToHitCount = (r: DBHitCountRow): HitCountRecord => ({
   year: r.year ?? new Date().getFullYear(),
 })
 
-/** CREATE hit count record */
 export async function createHitCount(input: {
   repId: string
   leadEntryId?: string
@@ -52,6 +51,21 @@ export async function createHitCount(input: {
   month: number
   year: number
 }): Promise<HitCountRecord> {
+  
+  // 🔍 CRITICAL DEBUG LOGGING
+  const stack = new Error().stack;
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('📊 CREATING HIT COUNT:', {
+    hitType: input.hitType,
+    hitValue: input.hitValue,
+    lane: input.lane,
+    repId: input.repId,
+    leadEntryId: input.leadEntryId
+  });
+  console.log('📍 Called from:');
+  console.log(stack);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  
   const { data, error } = await supabase
     .from('rep_hit_counts')
     .insert({
