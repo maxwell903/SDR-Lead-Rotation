@@ -355,9 +355,28 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     }
     
  
-    // Skip entries
-    return <span className="italic">Skip</span>;
- };
+      // Non-lead entries (skip, ooo, next)
+    if (entry.type === 'ooo') {
+      return (
+        <div className="space-y-0.5">
+          <div className="font-medium">OOO</div>
+          {entry.time && (
+            <div className="text-[10px] text-red-600">{entry.time}</div>
+          )}
+        </div>
+      );
+    }
+    
+    if (entry.type === 'skip') {
+      return <span className="italic">Skip</span>;
+    }
+    
+    if (entry.type === 'next') {
+     return <span className="font-medium">NEXT</span>;
+    }
+    
+    return <span className="italic">{entry.value}</span>;
+  };
 
   // Keep this INSIDE the component
   // Enhanced hover handler for LRL/RLBR partner animation

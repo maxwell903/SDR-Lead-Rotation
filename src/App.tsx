@@ -24,6 +24,7 @@ import { useSalesReps } from './hooks/useSupabaseData';
 import AuthWrapper from './components/AuthWrapper';
 import { useLeads } from './hooks/useLeads';
 import EditLeadModal from './components/EditLeadModal';
+import { useNonLeadEntries } from './hooks/useNonLeadEntries';
 
 
 const generateUniqueId = (prefix: string = 'entry'): string => {
@@ -328,6 +329,7 @@ export default function App() {
   removeLead, 
   checkDeletionStatus 
 } = useLeads();
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [monthlyData, setMonthlyData] = useState<{ [key: string]: MonthData }>({});
   const [rotationState, setRotationState] = useState<RotationState>({
@@ -341,6 +343,13 @@ export default function App() {
     normalRotationSub1k: [],
     normalRotationOver1k: []
   });
+
+   const { 
+    entries: dbNonLeadEntries, 
+    addNonLeadEntry, 
+    removeNonLeadEntry,
+    loading: nonLeadEntriesLoading 
+  } = useNonLeadEntries(currentDate.getMonth() + 1, currentDate.getFullYear());
 
     
   const {
@@ -371,45 +380,54 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const monthName = formatMonth(currentDate);
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
   
-  // UPDATED: Enhanced currentMonthData with forceRefresh dependency
-  const currentMonthData = useMemo(() => {
-    const existing = monthlyData[monthKey];
+   const currentMonthData: MonthData = useMemo(() => {
+    const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
     
-    // Get leads from DB for current month
+    // Get current month's leads from database
     const currentMonthLeads = dbLeads.filter(lead => 
       lead.month === currentDate.getMonth() + 1 && 
       lead.year === currentDate.getFullYear()
     );
-
- 
     
-    // Always reconstruct entries from DB leads
-    const entriesFromDbLeads: LeadEntry[] = currentMonthLeads.map(lead => ({
-  id: `entry_${lead.id}`,
-  day: new Date(lead.date).getDate(),
-  repId: lead.assignedTo,
-  type: 'lead' as const,
-  value: lead.accountNumber,
-  url: lead.url,
-  comments: lead.comments,
-  leadId: lead.id,
-  month: currentDate.getMonth(),
-  year: currentDate.getFullYear(),
-  unitCount: lead.unitCount,
-  rotationTarget: lead.unitCount >= 1000 ? 'over1k' : 'sub1k',
-  propertyTypes: lead.propertyTypes || [],
-}));
+    // Convert DB leads to LeadEntry format for calendar display
+    const entriesFromDbLeads = currentMonthLeads.map(lead => ({
+      id: `lead_${lead.id}`,
+      day: new Date(lead.date).getDate(),
+      repId: lead.assignedTo,
+      type: 'lead' as const,
+      value: lead.accountNumber,
+      url: lead.url || undefined,
+      comments: lead.comments || [],
+      leadId: lead.id,
+      month: currentDate.getMonth(),
+      year: currentDate.getFullYear(),
+      unitCount: lead.unitCount || undefined,
+      rotationTarget: (lead.unitCount || 0) >= 1000 ? 'over1k' as const : 'sub1k' as const,
+      propertyTypes: lead.propertyTypes || [],
+    }));
     
-    // Get non-lead entries from local state (skip, ooo, next)
-    const nonLeadEntries = existing?.entries.filter(entry => entry.type !== 'lead') || [];
+    // Convert DB non-lead entries to LeadEntry format for calendar display
+     const entriesFromDbNonLeads = dbNonLeadEntries.map(entry => ({
+      id: entry.id,
+      day: entry.day,
+      repId: entry.repId,
+      type: entry.entryType === 'OOO' ? 'ooo' as const : 'skip' as const,
+      value: entry.entryType,
+      month: currentDate.getMonth(),
+      year: currentDate.getFullYear(),
+      rotationTarget: entry.rotationTarget as 'sub1k' | 'over1k' | 'both' | undefined,
+      time: entry.time, // Include time for OOO entries
+      comments: [],
+      propertyTypes: [],
+    }));
     
     return {
       month: currentDate.getMonth(),
       year: currentDate.getFullYear(),
       leads: currentMonthLeads,
-      entries: [...entriesFromDbLeads, ...nonLeadEntries] // Combine DB leads + local non-lead entries
+      entries: [...entriesFromDbLeads, ...entriesFromDbNonLeads]
     };
-  }, [monthlyData, monthKey, currentDate, dbLeads, replacementState]); // Add replacementState
+  }, [currentDate, dbLeads, dbNonLeadEntries, replacementState]);
 
   
 
@@ -658,64 +676,52 @@ const handleAddLead = async (leadData: any) => {
     return;
   }
 
-  // Handle non-lead entries (skip, ooo, next) - keep in local state only
-  if (leadData.type && leadData.type !== 'lead') {
+   // Handle non-lead entries (skip, ooo) - save to database
+  if (leadData.type && leadData.type !== 'lead' && leadData.type !== 'next') {
+    try {
+      setIsDbLoading(true);
+      setDbLoadingMessage(`Creating ${leadData.type === 'ooo' ? 'OOO' : 'Skip'} entry...`);
+
+      await addNonLeadEntry({
+        repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
+        entryType: leadData.type === 'ooo' ? 'OOO' : 'SKP',
+        day: selectedCell?.day || new Date().getDate(),
+        month: leadMonth + 1,
+        year: leadYear,
+        time: leadData.type === 'ooo' ? leadData.oooTime : undefined,
+        rotationTarget: leadData.rotationTarget || 'both',
+      });
+
+      setShowLeadModal(false);
+      setSelectedCell(null);
+    } catch (error) {
+      console.error('Failed to create non-lead entry:', error);
+      alert('Failed to create entry. Please try again.');
+    } finally {
+      setIsDbLoading(false);
+      setDbLoadingMessage('');
+    }
+    return;
+  }
+
+  // Handle NEXT entries in local state only (legacy behavior)
+   if (leadData.type === 'next') {
     const newEntry: LeadEntry = {
-      id: generateUniqueId('nonlead'),
+      id: generateUniqueId('next'),
       day: selectedCell?.day || new Date().getDate(),
       repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
-      type: leadData.type,
-      value: leadData.type.toUpperCase(),
-      url: undefined,
-      comments: [],
+      type: 'next',
+      value: 'NEXT',
       month: viewingMonth,
       year: viewingYear,
-      unitCount: undefined,
       rotationTarget: leadData.rotationTarget || 'both',
-      propertyTypes: leadData.propertyTypes || [],
+      comments: [],
+      propertyTypes: [],
     };
     
-    // Use safe state update to prevent duplicates
     updateMonthlyDataSafely(setMonthlyData, monthKey, currentMonthData, (entries) => {
-      const duplicate = checkForDuplicateEntry(entries, newEntry);
-      if (duplicate) {
-        alert(`A ${leadData.type.toUpperCase()} entry already exists for ${salesReps.find(r => r.id === newEntry.repId)?.name || 'this rep'} on day ${newEntry.day}`);
-        throw new Error('Duplicate entry prevented');
-      }
       return safeAddEntryToState(entries, newEntry);
     });
-
-    // Store hit count for skip entries (SKIP = +1)
-    if (leadData.type === 'skip') {
-      try {
-        // Determine lane based on rotationTarget or default to both lanes
-        const lanes = leadData.rotationTarget === 'over1k' ? ['1kplus'] : 
-                     leadData.rotationTarget === 'sub1k' ? ['sub1k'] :
-                     ['sub1k', '1kplus'];
-        
-        for (const lane of lanes) {
-          await createHitCount({
-            repId: newEntry.repId,
-            hitType: 'SKIP',
-            hitValue: 1,
-            lane: lane as 'sub1k' | '1kplus',
-            month: viewingMonth + 1,
-            year: viewingYear,
-          });
-        }
-      } catch (e) {
-        console.error('Failed to record SKIP hit:', e);
-      }
-
-      // Update skip counts
-      const newSkipCounts: { [repId: string]: number } = { ...rotationState.skips };
-      newSkipCounts[newEntry.repId] = (newSkipCounts[newEntry.repId] || 0) + 1;
-      
-      setRotationState(prev => ({
-        ...prev,
-        skips: newSkipCounts
-      }));
-    }
 
     setShowLeadModal(false);
     setSelectedCell(null);
@@ -909,52 +915,40 @@ if (entry?.type === 'lead' && entry.leadId) {
       
       
       // Only update local state for non-lead entries (skip, ooo, next) 
-      const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
-      
-      const updatedData = {
-        ...currentMonthData,
-        entries: updatedEntries,
-        leads: currentMonthData.leads
-      };
-      
-      setMonthlyData(prev => ({
-        ...prev,
-        [monthKey]: updatedData
-      }));
-
-      // Recalculate skip counts (for non-lead entries)
-      if (entry.type === 'skip') {
-        // Hit accounting: deleting SKIP → −1 (apply to lane(s) it targeted)
+      // Handle OOO and Skip deletion via database
+      if (entry.type === 'ooo' || entry.type === 'skip') {
         try {
-          const lanes =
-            entry.rotationTarget === 'over1k' ? ['1kplus'] :
-            entry.rotationTarget === 'sub1k' ? ['sub1k'] :
-            ['sub1k','1kplus'];
-          for (const lane of lanes) {
-            await createHitCount({
-              repId: entry.repId,
-              hitType: 'SKIP',
-              hitValue: -1,
-              lane: lane as any,
-             month: currentDate.getMonth() + 1,
-              year: currentDate.getFullYear(),
-            });
-          }
-        } catch (e) {
-          console.error('Failed to record SKIP delete hit:', e);
+          setIsDbLoading(true);
+          setDbLoadingMessage(`Deleting ${entry.type === 'ooo' ? 'OOO' : 'Skip'} entry...`);
+          
+          await removeNonLeadEntry(entry.id);
+          
+          setIsDbLoading(false);
+          setDbLoadingMessage('');
+        } catch (error) {
+          console.error('Failed to delete non-lead entry:', error);
+          alert('Failed to delete entry. Please try again.');
+          setIsDbLoading(false);
+          setDbLoadingMessage('');
         }
-        const newSkipCounts: { [repId: string]: number } = {};
-        updatedEntries.forEach(e => {
-          if (e.type === 'skip') {
-            newSkipCounts[e.repId] = (newSkipCounts[e.repId] || 0) + 1;
-          }
-        });
+        return;
+      }
 
-        setRotationState(prev => ({
+      // Handle NEXT entries in local state only (legacy behavior)
+      if (entry.type === 'next') {
+        const updatedEntries = currentMonthData.entries.filter(e => e.id !== entryId);
+        
+        const updatedData = {
+          ...currentMonthData,
+          entries: updatedEntries,
+          leads: currentMonthData.leads
+        };
+        
+        setMonthlyData(prev => ({
           ...prev,
-          skips: newSkipCounts
+          [monthKey]: updatedData
         }));
-      } 
+      }
     }   // closes outer: if (entry)
     } finally {
       if (entry?.type === 'lead') {

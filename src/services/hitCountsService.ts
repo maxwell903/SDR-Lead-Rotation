@@ -1,8 +1,8 @@
 import { supabase } from '../lib/supabase'
 import { logAction } from './actionTracker'
 
-export type HitType = 'NL' | 'MFR' | 'MFR_UNMARK' | 'LRL' | 'LTR' | 'SKIP';
-const HIT_TYPES: HitType[] = ['NL','MFR','MFR_UNMARK','LRL','LTR','SKIP'];
+export type HitType = 'NL' | 'MFR' | 'MFR_UNMARK' | 'LRL' | 'LTR' | 'SKIP' | 'OOO';
+const HIT_TYPES: HitType[] = ['NL','MFR','MFR_UNMARK','LRL','LTR','SKIP','OOO'];
 export type Lane = 'sub1k' | '1kplus'
 
 export interface HitCountRecord {

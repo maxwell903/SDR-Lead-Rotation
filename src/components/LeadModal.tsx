@@ -6,6 +6,7 @@ import {
 } from '../features/leadReplacement';
 import { SalesRep, LeadEntry, RotationState, MonthData } from '../types';
 import { DatePicker } from './DatePicker';
+import { TimeInput } from './TimeInput';
 
 interface LeadModalProps {
   onClose: () => void;
@@ -88,6 +89,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
   const [newComment, setNewComment] = useState('');
   const [entryType, setEntryType] = useState<'lead' | 'skip' | 'ooo' | 'next'>('lead');
+  const [oooTime, setOooTime] = useState<string>('9:00 AM');
   const [eligibleReps, setEligibleReps] = useState<SalesRep[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -261,6 +263,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    
     
     if (entryType === 'lead') {
       if (!formData.accountNumber.trim()) {
@@ -368,7 +372,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
     setIsSubmitting(true);
     
     try {
-      const saveData = {
+       const saveData = {
         type: entryType,
         value: entryType === 'lead' ? formData.accountNumber : entryType,
         accountNumber: formData.accountNumber,
@@ -384,8 +388,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
         rotationTarget: entryType === 'lead'
           ? ((formData.unitCount ?? 0) >= 1000 ? 'over1k' : 'sub1k')
           : 'sub1k',
-         replaceToggle,
-         originalLeadIdToReplace: replaceToggle ? originalLeadIdToReplace : undefined,
+        oooTime: entryType === 'ooo' ? oooTime : undefined,
+        replaceToggle,
+        originalLeadIdToReplace: replaceToggle ? originalLeadIdToReplace : undefined,
         id: editingEntry?.id
       };
 
@@ -471,6 +476,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
     }
   }, [replaceToggle]);
 
+
+
+
   return (
     <>
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -521,8 +529,21 @@ const LeadModal: React.FC<LeadModalProps> = ({
                 <option value="next">Next Indicator</option>
               </select>
             </div>
-
-            {/* 2. Replacement Toggle (aligned with Entry Type) */}
+             {/* 1.5 OOO Time Field - Right of Entry Type */}
+            <div className="md:col-span-1">
+              {/* Desktop-only spacer to match the Entry Type label height */}
+               <div className="hidden md:block">
+                  <label className="block text-sm font-bold text-gray-700 mb-3">Time</label>
+               </div>
+     
+                {entryType === 'ooo' && (
+                  <TimeInput
+                    value={oooTime}
+                    onChange={setOooTime}
+                  />
+                )}
+              </div>
+              {/* 2. Replacement Toggle (aligned with Entry Type) */}
             <div className="md:col-span-1">
               {/* Desktop-only spacer to match the Entry Type label height */}
               <div className="hidden md:block">

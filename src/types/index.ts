@@ -53,7 +53,10 @@ export interface LeadEntry {
   unitCount?: number;
   rotationTarget?: 'sub1k' | 'over1k' | 'both';
   propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[]; // This line must be here
+  time?: string; // For OOO entries
 }
+
+export type { NonLeadEntry } from '../services/nonLeadEntriesService';
 
 export interface MonthData {
   month: number;
