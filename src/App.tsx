@@ -368,11 +368,17 @@ export default function App() {
 const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [showRepManager, setShowRepManager] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
-  const [selectedCell, setSelectedCell] = useState<{ day: number; repId: string } | null>(null);
   const [editingEntry, setEditingEntry] = useState<LeadEntry | null>(null);
   const [activeSaveOperations, setActiveSaveOperations] = useState<Set<string>>(new Set());
   const [isDbLoading, setIsDbLoading] = useState(false);
   const [dbLoadingMessage, setDbLoadingMessage] = useState('');
+  const [selectedCell, setSelectedCell] = useState<{ 
+  day: number; 
+  repId: string;
+  month: number;  // ADDED
+  year: number;   // ADDED
+} | null>(null);
+
   
 
   // 2) Derived values (fine to compute every render)
@@ -805,10 +811,10 @@ const handleAddLead = async (leadData: any) => {
 
   
 
-  const handleCellClick = (day: number, repId: string) => {
-    setSelectedCell({ day, repId });
-    setShowLeadModal(true);
-  };
+  const handleCellClick = (day: number, repId: string, month: number, year: number) => {
+  setSelectedCell({ day, repId, month, year }); // Now includes month and year
+  setShowLeadModal(true);
+};
 
   const handleDeleteEntry = async (entryId: string) => {
     const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
@@ -959,10 +965,15 @@ if (entry?.type === 'lead' && entry.leadId) {
   };
 
   const handleEditEntry = (entry: LeadEntry) => {
-    setEditingEntry(entry);
-    setSelectedCell({ day: entry.day, repId: entry.repId });
-    setShowLeadModal(true);
-  };
+  setEditingEntry(entry);
+  setSelectedCell({ 
+    day: entry.day, 
+    repId: entry.repId,
+    month: entry.month,  // ADDED: Get month from the entry being edited
+    year: entry.year     // ADDED: Get year from the entry being edited
+  });
+  setShowLeadModal(true);
+};
 
   const handleEditLead = (lead: Lead) => {
   setEditingLead(lead);

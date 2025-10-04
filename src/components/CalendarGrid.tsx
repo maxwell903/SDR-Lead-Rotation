@@ -15,7 +15,7 @@ interface CalendarGridProps {
   daysInMonth: number;
   rotationState: RotationState;
   currentDay: number;
-  onCellClick: (day: number, repId: string) => void;
+  onCellClick: (day: number, repId: string, month: number, year: number) => void; 
   onDeleteEntry: (entryId: string) => void;
   onEditEntry: (entry: LeadEntry) => void;
   onEditLead: (lead: Lead) => void;
@@ -625,14 +625,14 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                     <td 
                       key={`${day}-${rep.id}`} 
                       className={`border-r border-gray-200 cursor-pointer transition-all duration-200 ${getCellStyle(entries, day)}`}
-                      onClick={() => onCellClick(day, rep.id)}
+                      onClick={() => onCellClick(day, rep.id, viewingMonth, viewingYear)} // UPDATED: Pass viewingMonth and viewingYear
                       style={{ 
                         width: 'var(--data-cell-width)',
                         height: 'var(--data-cell-height)',
                         fontSize: 'var(--data-cell-font-size)',
                         padding: 'var(--data-cell-padding)',
                         minWidth: 'var(--data-cell-width)',
-                      }}
+                    }}
                     >
                       <div className="flex flex-col justify-start space-y-1 h-full">
                         {entries.length === 0 ? (
@@ -655,25 +655,25 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                               {/* Hover actions */}
                               <div className="hidden group-hover:flex items-center space-x-1 ml-2">
                                 {/* Hover actions */}
-<div className="hidden group-hover:flex items-center space-x-1 ml-2">
-  {/* Edit and Delete buttons */}
-  <button
-    onClick={(e) => {
-      e.stopPropagation();
-      if (entry.type === 'lead') {
-        const lead = getLeadForEntry(entry);
-        if (lead) onEditLead(lead);
-      } else {
-        handleEntryAction(e, 'edit', entry);
-      }
-    }}
-    className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
-    title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
-  >
-    <Edit className="w-3 h-3" />
-  </button>
-  
-</div>
+                              <div className="hidden group-hover:flex items-center space-x-1 ml-2">
+                                {/* Edit and Delete buttons */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (entry.type === 'lead') {
+                                      const lead = getLeadForEntry(entry);
+                                      if (lead) onEditLead(lead);
+                                    } else {
+                                      handleEntryAction(e, 'edit', entry);
+                                    }
+                                  }}
+                                  className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
+                                  title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
+                                >
+                                  <Edit className="w-3 h-3" />
+                                </button>
+                                
+                              </div>
                                 
                                 
                               </div>
@@ -692,7 +692,7 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                     <td 
                       key={`${day}-${rep.id}`} 
                       className={`border-r border-gray-200 cursor-pointer transition-all duration-200 ${getCellStyle(entries, day)}`}
-                      onClick={() => onCellClick(day, rep.id)}
+                      onClick={() => onCellClick(day, rep.id, viewingMonth, viewingYear)} // UPDATED: Pass viewingMonth and viewingYear
                       style={{ 
                         width: 'var(--data-cell-width)',
                         height: 'var(--data-cell-height)',

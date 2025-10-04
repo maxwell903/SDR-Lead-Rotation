@@ -13,7 +13,12 @@ interface LeadModalProps {
   onSave: (data: any) => void;
   onDelete?: (entryId: string) => void;
   salesReps: SalesRep[];
-  selectedCell: { day: number; repId: string } | null;
+   selectedCell: { 
+    day: number; 
+    repId: string; 
+    month: number;  
+    year: number;   
+  } | null;
   editingEntry: LeadEntry | null;
   rotationState: RotationState;
   getEligibleReps: (leadData: any) => SalesRep[];
@@ -206,8 +211,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
       setEntryType(editingEntry.type);
     } else {
       const defaultDate = selectedCell ? 
-        new Date(new Date().getFullYear(), new Date().getMonth(), selectedCell.day) : 
-        (selectedDate || new Date());
+  new Date(selectedCell.year, selectedCell.month, selectedCell.day) : 
+  (selectedDate || new Date());
       
       setFormData(prev => ({
         ...prev,
