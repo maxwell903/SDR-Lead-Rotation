@@ -1160,20 +1160,21 @@ const handleRemoveReplacementMark = async (leadId: string) => {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <div className="lg:col-span-3">
             <CalendarGrid
-              salesReps={salesReps}
-              leadEntries={currentMonthData.entries}
-              daysInMonth={daysInMonth}
-              rotationState={rotationState}
-              currentDay={getCurrentDay()}
-              onCellClick={handleCellClick}
-              onDeleteEntry={handleDeleteEntry}
-              onEditEntry={handleEditEntry}
-              leads={currentMonthData.leads}
-              replacementState={replacementState}
-          onMarkForReplacement={handleMarkForReplacement}
-          onRemoveReplacementMark={handleRemoveReplacementMark}
-              onEditLead={handleEditLead}
-            />
+                salesReps={salesReps}
+                leadEntries={currentMonthData.entries}
+                daysInMonth={daysInMonth}
+                rotationState={rotationState}
+                currentDay={getCurrentDay()}
+                onCellClick={handleCellClick}
+                onDeleteEntry={handleDeleteEntry}
+                onEditEntry={handleEditEntry}
+                leads={currentMonthData.leads}
+                replacementState={replacementState}
+                onMarkForReplacement={handleMarkForReplacement}
+                onRemoveReplacementMark={handleRemoveReplacementMark}
+                onEditLead={handleEditLead}  
+                viewingMonth={currentDate.getMonth()}
+                viewingYear={currentDate.getFullYear()}          />
           </div>
           
           <div className="space-y-6">

@@ -27,6 +27,9 @@ interface CalendarViewOptionsProps {
   onShowCanDoChange: (value: boolean) => void;
   showCantDo: boolean;
   onShowCantDoChange: (value: boolean) => void;
+
+    viewingMonth: number;  // 0-indexed (0 = Jan, 11 = Dec)
+  viewingYear: number;
 }
 
 const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
@@ -48,8 +51,21 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
   onShowCanDoChange,
   showCantDo,
   onShowCantDoChange,
+   viewingMonth,
+  viewingYear,
+
+  
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+   // Get month abbreviation (Jan, Feb, Mar, etc.)
+  const getMonthAbbreviation = (monthIndex: number): string => {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return monthNames[monthIndex] || 'Unknown';
+  };
+
+  const currentMonthLabel = getMonthAbbreviation(viewingMonth);
+
 
   return (
     <div className="relative">
@@ -154,7 +170,9 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
                     onChange={(e) => onShowDayOfMonthChange(e.target.checked)}
                     className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                   />
-                  <span className="text-sm text-gray-600">Show Day of Month</span>
+                  <span className="text-sm text-gray-600">
+                    Show Day of Month ({currentMonthLabel})
+                  </span>
                 </label>
                 <label className="flex items-center space-x-2">
                   <input

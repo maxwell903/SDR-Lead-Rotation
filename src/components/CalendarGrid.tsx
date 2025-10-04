@@ -19,6 +19,8 @@ interface CalendarGridProps {
   onDeleteEntry: (entryId: string) => void;
   onEditEntry: (entry: LeadEntry) => void;
   onEditLead: (lead: Lead) => void;
+  viewingMonth: number;  // NEW: Month being viewed (0-indexed)
+  viewingYear: number;   // NEW: Year being viewed
   leads: Lead[];
   //lead-replacement props
   replacementState: ReplacementState;
@@ -37,10 +39,12 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   onEditEntry,
   onEditLead,
   leads,
-  // NEW
+  viewingMonth,  
+  viewingYear,   
   replacementState,
   onMarkForReplacement,
   onRemoveReplacementMark,
+
 }) => {
   // State management
   const [zoomLevel, setZoomLevel] = useState(50); // max percent
@@ -78,25 +82,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   const currentMonth = currentDate.getMonth();
 
   // Format day header based on toggle settings
-  const formatDayHeader = (day: number) => {
-    const date = new Date(currentYear, currentMonth, day);
-    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
-    let formatted = '';
-    
-    if (showDayOfWeek) {
-      formatted += dayNames[date.getDay()];
-    }
-    
-    if (showDayOfMonth) {
-      if (showDayOfWeek) formatted += ' ';
-      formatted += `${monthNames[currentMonth]} ${day}${getOrdinalSuffix(day)}`;
-    }
-    
-    return formatted || day.toString();
-  };
+  
 
   // Get ordinal suffix for day (1st, 2nd, 3rd, etc.)
   const getOrdinalSuffix = (day: number) => {
@@ -108,6 +94,29 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
       default: return 'th';
     }
   };
+
+  // ✅ REPLACE the formatDayHeader function with this:
+const formatDayHeader = (day: number) => {
+  // Use viewingMonth and viewingYear props instead of current date
+  const date = new Date(viewingYear, viewingMonth, day);
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  
+  let formatted = '';
+  
+  if (showDayOfWeek) {
+    formatted += dayNames[date.getDay()];
+  }
+  
+  if (showDayOfMonth) {
+    if (showDayOfWeek) formatted += ' ';
+    // Use viewingMonth prop instead of currentMonth
+    formatted += `${monthNames[viewingMonth]} ${day}${getOrdinalSuffix(day)}`;
+  }
+  
+  return formatted || day.toString();
+};
 
   // Function to find lead data for an entry
   const getLeadForEntry = (entry: LeadEntry): Lead | null => {
@@ -466,6 +475,8 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
             onShowCanDoChange={setShowCanDo}
             showCantDo={showCantDo}
             onShowCantDoChange={setShowCantDo}
+            viewingMonth={viewingMonth}  // ADD THIS
+            viewingYear={viewingYear}    // ADD THIS
           />
         </div>
       </div>
