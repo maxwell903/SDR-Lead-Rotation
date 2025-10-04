@@ -529,28 +529,26 @@ const LeadModal: React.FC<LeadModalProps> = ({
                 <option value="next">Next Indicator</option>
               </select>
             </div>
-             {/* 1.5 OOO Time Field - Right of Entry Type */}
-            <div className="md:col-span-1">
-              {/* Desktop-only spacer to match the Entry Type label height */}
-               <div className="hidden md:block">
-                  <label className="block text-sm font-bold text-gray-700 mb-3">Time</label>
-               </div>
-     
-                {entryType === 'ooo' && (
-                  <TimeInput
-                    value={oooTime}
-                    onChange={setOooTime}
-                  />
-                )}
-              </div>
-              {/* 2. Replacement Toggle (aligned with Entry Type) */}
-            <div className="md:col-span-1">
-              {/* Desktop-only spacer to match the Entry Type label height */}
-              <div className="hidden md:block">
-                <label className="block text-sm font-bold text-gray-700 mb-3 invisible">Entry Type</label>
-              </div>
 
-              {entryType === 'lead' && (
+            {/* 2. Date */}
+            <div className="md:col-span-1">
+              <label className="block text-sm font-bold text-gray-700 mb-3">Date*</label>
+              <DatePicker
+                value={formData.date}
+                onChange={(newDate) => setFormData(prev => ({ ...prev, date: newDate }))}
+                minDate={new Date(2000, 0, 1)}
+                maxDate={new Date(2099, 11, 31)}
+              />
+            </div>
+
+            {/* 3. Replacement Toggle (only for lead type, aligned with Entry Type row) */}
+            {entryType === 'lead' && (
+              <div className="md:col-span-1">
+                {/* Desktop-only spacer to match the Entry Type label height */}
+                <div className="hidden md:block">
+                  <label className="block text-sm font-bold text-gray-700 mb-3 invisible">Entry Type</label>
+                </div>
+
                 <div
                   className="border border-amber-200 rounded-xl p-3 sm:p-4 bg-amber-50 transition-[min-height]"
                   style={!replaceToggle && collapsedMinH ? { minHeight: collapsedMinH * 0.5 } : undefined}
@@ -574,20 +572,20 @@ const LeadModal: React.FC<LeadModalProps> = ({
                         Choose a lead in need of replacement
                       </label>
                       <select
-                      className="w-full rounded-xl border-2 border-amber-300 px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 bg-white"
-                      value={originalLeadIdToReplace}
-                      onChange={(e) => setOriginalLeadIdToReplace(e.target.value)}
-                    >
-                      <option value="">— Select a lead to replace —</option>
-                      {filteredReplacementOptions.length === 0 && replacementOptions.length > 0 && (
-                        <option disabled>No eligible leads (must match lane and sales rep)</option>
-                      )}
-                      {filteredReplacementOptions.map(opt => (
-                        <option key={opt.leadId} value={opt.leadId}>
-                          {opt.accountNumber} - {opt.repName} - {opt.lane} ({new Date(opt.markedAt).toLocaleDateString()})
-                        </option>
-                      ))}
-                    </select>
+                        className="w-full rounded-xl border-2 border-amber-300 px-3 py-2.5 text-sm focus:ring-2 focus:ring-amber-500 bg-white"
+                        value={originalLeadIdToReplace}
+                        onChange={(e) => setOriginalLeadIdToReplace(e.target.value)}
+                      >
+                        <option value="">— Select a lead to replace —</option>
+                        {filteredReplacementOptions.length === 0 && replacementOptions.length > 0 && (
+                          <option disabled>No eligible leads (must match lane and sales rep)</option>
+                        )}
+                        {filteredReplacementOptions.map(opt => (
+                          <option key={opt.leadId} value={opt.leadId}>
+                            {opt.accountNumber} - {opt.repName} - {opt.lane} ({new Date(opt.markedAt).toLocaleDateString()})
+                          </option>
+                        ))}
+                      </select>
                       {replaceToggle && filteredReplacementOptions.length === 0 && replacementOptions.length > 0 && (
                         <div className="mt-2 text-xs text-amber-700 bg-amber-100 p-3 rounded-lg border border-amber-300">
                           <strong>No eligible leads for replacement</strong>
@@ -600,16 +598,15 @@ const LeadModal: React.FC<LeadModalProps> = ({
                           </ul>
                         </div>
                       )}
-
                     </div>
                   )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* 3. Account Number */}
+            {/* 4. Account Number (only for lead type) */}
             {entryType === 'lead' && (
-              <div className="md:col-span-1">
+              <div className="md:col-span-1" ref={accBoxRef}>
                 <label className="block text-sm font-bold text-gray-700 mb-3">Account Number *</label>
                 <textarea
                   value={formData.accountNumber}
@@ -621,7 +618,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </div>
             )}
 
-            {/* 4. Property Types */}
+            {/* 5. Property Types (only for lead type) */}
             {entryType === 'lead' && (
               <div className="md:col-span-1">
                 <label className="block text-sm font-bold text-gray-700 mb-3">Property Types</label>
@@ -661,7 +658,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </div>
             )}
 
-            {/* 5. URL */}
+            {/* 6. URL (only for lead type) */}
             {entryType === 'lead' && (
               <div className="md:col-span-1">
                 <label className="block text-sm font-bold text-gray-700 mb-3">URL*</label>
@@ -676,7 +673,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </div>
             )}
 
-            {/* 6. Unit Count (optional) */}
+            {/* 7. Unit Count (only for lead type) */}
             {entryType === 'lead' && (
               <div className="md:col-span-1">
                 <label className="block text-sm font-bold text-gray-700 mb-3">Unit Count</label>
@@ -696,44 +693,64 @@ const LeadModal: React.FC<LeadModalProps> = ({
               </div>
             )}
 
-            {/* 7. Assign Sales Rep */}
-            <div className="md:col-span-1">
-              <label className="block text-sm font-bold text-gray-700 mb-3">Assign Sales Rep *</label>
-              <select
-                value={formData.assignedTo}
-                 onChange={(e) => !replaceToggle && setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
-                className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
-                required
-              >
-                <option value="">Select sales rep...</option>
-                {eligibleReps.map(rep => {
-                  const position = getRepPositionInRotation(rep.id);
-                  return (
-                    <option key={rep.id} value={rep.id}>
-                      {position ? `${position}. ` : ''}{rep.name} {rep.status === 'ooo' ? '(Out of Office)' : ''}
-                    </option>
-                  );
-                })}
-              </select>
-              {replaceToggle && originalLeadInfo && (
-                <div className="mt-2 text-xs text-amber-600 bg-amber-50 p-2 rounded">
-                  <strong>Replacement Rule:</strong> Must be assigned to {originalLeadInfo.repName} 
-                  (same as original lead: {originalLeadInfo.accountNumber})
+            {/* 8. Assign Sales Rep and Time (side-by-side for OOO/Skip) */}
+            {/* For OOO and Skip: appears right after Date on the same row */}
+            {(entryType === 'ooo' || entryType === 'skip') && (
+              <>
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-bold text-gray-700 mb-3">Assign Sales Rep *</label>
+                  <select
+                    value={formData.assignedTo}
+                    onChange={(e) => !replaceToggle && setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
+                    className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+                    required
+                  >
+                    <option value="">Select sales rep...</option>
+                    {eligibleReps.map(rep => {
+                      const position = getRepPositionInRotation(rep.id);
+                      return (
+                        <option key={rep.id} value={rep.id}>
+                          {position ? `${position}. ` : ''}{rep.name} {rep.status === 'ooo' ? '(Out of Office)' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
-              )}
-            </div>
 
-            <div className="md:col-span-1">
-  <label className="block text-sm font-bold text-gray-700 mb-3">Date*</label>
-  <DatePicker
-    value={formData.date}
-    onChange={(newDate) => setFormData(prev => ({ ...prev, date: newDate }))}
-    minDate={new Date(2000, 0, 1)}
-    maxDate={new Date(2099, 11, 31)}
-  />
-</div>
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-bold text-gray-700 mb-3">Time</label>
+                  <TimeInput
+                    value={oooTime}
+                    onChange={setOooTime}
+                  />
+                </div>
+              </>
+            )}
 
-            {/* Comments (FULL WIDTH) */}
+            {/* 10. Assign Sales Rep for Lead type (keeps its original position after Unit Count) */}
+            {entryType === 'lead' && (
+              <div className="md:col-span-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3">Assign Sales Rep *</label>
+                <select
+                  value={formData.assignedTo}
+                  onChange={(e) => !replaceToggle && setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
+                  className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+                  required
+                >
+                  <option value="">Select sales rep...</option>
+                  {eligibleReps.map(rep => {
+                    const position = getRepPositionInRotation(rep.id);
+                    return (
+                      <option key={rep.id} value={rep.id}>
+                        {position ? `${position}. ` : ''}{rep.name} {rep.status === 'ooo' ? '(Out of Office)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+
+            {/* 11. Comments (full width for all types) */}
             <div className="md:col-span-2">
               <label className="block text-sm font-bold text-gray-700 mb-3">Comments</label>
               <div className="space-y-3">
@@ -749,38 +766,71 @@ const LeadModal: React.FC<LeadModalProps> = ({
                 </button>
 
                 {showCommentsDropdown && (
-                  <div className="space-y-2 max-h-32 overflow-y-auto">
-                    {formData.comments.map((comment, index) => (
-                      <div key={index} className="text-sm bg-blue-50 p-3 rounded-xl border border-blue-200">
-                        {comment}
+                  <div className="space-y-3 bg-blue-50 p-4 rounded-xl border-2 border-blue-200">
+                    {formData.comments.length > 0 && (
+                      <div className="space-y-2 mb-3">
+                        {formData.comments.map((comment, index) => (
+                          <div key={index} className="flex items-start space-x-2 bg-white p-3 rounded-lg border border-blue-200">
+                            <span className="flex-1 text-sm text-gray-700">{comment}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  comments: prev.comments.filter((_, i) => i !== index)
+                                }));
+                              }}
+                              className="text-red-500 hover:text-red-700 transition-colors"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    {formData.comments.length === 0 && (
-                      <div className="text-sm text-gray-500 p-3">No comments yet</div>
                     )}
+
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        placeholder="Add a comment..."
+                        className="flex-1 p-2 border-2 border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                        onKeyPress={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (newComment.trim()) {
+                              setFormData(prev => ({
+                                ...prev,
+                                comments: [...prev.comments, newComment.trim()]
+                              }));
+                              setNewComment('');
+                            }
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newComment.trim()) {
+                            setFormData(prev => ({
+                              ...prev,
+                              comments: [...prev.comments, newComment.trim()]
+                            }));
+                            setNewComment('');
+                          }
+                        }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                      >
+                        Add
+                      </button>
+                    </div>
                   </div>
                 )}
-
-                <div className="flex space-x-2">
-                  <input
-                    type="text"
-                    value={newComment}
-                    onChange={(e) => setNewComment(e.target.value)}
-                    className="flex-1 p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    placeholder="Add a comment..."
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddComment}
-                    className="px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all font-medium"
-                  >
-                    Add
-                  </button>
-                </div>
               </div>
             </div>
           </form>
-
+          
 
           {/* 10. Footer */}
           <div className="bg-blue-50 px-6 py-4 border-t-2 border-blue-200 flex space-x-4">
