@@ -137,6 +137,10 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
     });
   }, [getEligibleReps, formData.propertyTypes, formData.unitCount, salesReps]);
 
+  const isRLBR = useMemo(() => {
+    return replacementState.byLeadId[editingLead.id] && !!replacementState.byLeadId[editingLead.id].replacedByLeadId;
+}, [replacementState, editingLead.id]);
+
   // Modal title logic
   const getModalTitle = () => {
     if (isReplacementLead) {
@@ -398,6 +402,7 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
                 <h3 className="text-xl font-bold text-blue-700">
                   {getModalTitle()}
                 </h3>
+                {!isMarkedForReplacement && !isRLBR && (
                 <button
                   onClick={() => setShowDeleteConfirm(true)}
                   className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-red-200 hover:border-red-300"
@@ -405,6 +410,7 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
+                )}
               </div>
               <button 
                 onClick={onClose} 
