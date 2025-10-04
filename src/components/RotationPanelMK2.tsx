@@ -45,22 +45,26 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
   const [expanded1kPlus, setExpanded1kPlus] = useState(false);
   const [loading, setLoading] = useState(true);
   const [oooTargets, setOooTargets] = useState<Map<string, string>>(new Map());
+
+  const [refreshKey, setRefreshKey] = useState(0);
   
   const month = viewingMonth + 1; // Convert from 0-based to 1-based
   const year = viewingYear;
 
   const loadHitCounts = useCallback(async () => {
-  try {
-    // Don't pass month/year to get cumulative hits from all time
-    const sub1kHits = await getNetHitCounts({ lane: 'sub1k' });
-    const over1kHits = await getNetHitCounts({ lane: '1kplus' });
-    
-    setHitsSub1k(sub1kHits);
-    setHits1kPlus(over1kHits);
-  } catch (error) {
-    console.error('Error loading hit counts:', error);
-  }
-}, []);
+    try {
+      const sub1kHits = await getNetHitCounts({ lane: 'sub1k' });
+      const over1kHits = await getNetHitCounts({ lane: '1kplus' });
+      
+      setHitsSub1k(sub1kHits);
+      setHits1kPlus(over1kHits);
+      
+      // 🔥 CRITICAL: Force component to re-render with new data
+      setRefreshKey(prev => prev + 1);
+    } catch (error) {
+      console.error('Error loading hit counts:', error);
+    }
+  }, []);
   
   const loadReplacementMarks = useCallback(async () => {
     try {
@@ -85,6 +89,9 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
       });
   
       setReplacementMarks(replacements);
+      
+      // 🔥 CRITICAL: Force re-render when replacements change
+      setRefreshKey(prev => prev + 1);
     } catch (error) {
       console.error('Error loading replacement marks:', error);
     }
@@ -170,55 +177,81 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
   }
 }, []);
 
+
 useEffect(() => {
-  // Subscribe to hit counts changes
-  const unsubscribeHits = subscribeHitCounts(() => {
-    loadHitCounts();
-  });
-
-  // Subscribe to replacement marks changes
-  const replacementChannel = supabase
-    .channel('replacement_marks_changes')
-    .on('postgres_changes', { 
-      event: '*', 
-      schema: 'public', 
-      table: 'replacement_marks' 
-    }, () => {
-      loadReplacementMarks();
-    })
-    .subscribe();
-
-  // Subscribe to non_lead_entries changes (for OOO updates)
-  const nonLeadEntriesChannel = supabase
-    .channel('non_lead_entries_rotation_changes')
-    .on('postgres_changes', { 
-      event: '*', 
-      schema: 'public', 
-      table: 'non_lead_entries' 
-    }, () => {
-      loadOOOStatus();
-    })
-    .subscribe();
-
-  // Subscribe to sales reps changes
-  const repsChannel = supabase
-    .channel('sales_reps_rotation_changes')
-    .on('postgres_changes', { 
-      event: '*', 
-      schema: 'public', 
-      table: 'sales_reps' 
-    }, () => {
+    console.log('🔄 Setting up real-time subscriptions for rotation panel');
+    
+    // 1. Subscribe to rep_hit_counts changes
+    const unsubscribeHits = subscribeHitCounts(() => {
+      console.log('🔔 Hit counts changed - refreshing rotation panel');
       loadHitCounts();
-    })
-    .subscribe();
+    });
 
-  return () => {
-    unsubscribeHits();
-    supabase.removeChannel(replacementChannel);
-    supabase.removeChannel(nonLeadEntriesChannel);
-    supabase.removeChannel(repsChannel);
-  };
-}, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
+    // 2. Subscribe to replacement_marks changes
+    const replacementChannel = supabase
+      .channel('replacement_marks_changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'replacement_marks' 
+      }, () => {
+        console.log('🔔 Replacement marks changed - reloading');
+        loadReplacementMarks();
+      })
+      .subscribe();
+
+    // 3. 🔥 CRITICAL: Subscribe to leads table changes (triggers hit count updates)
+    const leadsChannel = supabase
+      .channel('leads_rotation_changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'leads' 
+      }, () => {
+        console.log('🔔 Leads changed - reloading hit counts');
+        loadHitCounts();
+        loadReplacementMarks();
+      })
+      .subscribe();
+
+    // 4. 🔥 CRITICAL: Subscribe to non_lead_entries (SKIPs and OOOs)
+    const nonLeadEntriesChannel = supabase
+      .channel('non_lead_entries_rotation_changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'non_lead_entries' 
+      }, () => {
+        console.log('🔔 Non-lead entries changed - reloading everything');
+        loadOOOStatus();
+        loadHitCounts(); // SKIPs create hit counts!
+      })
+      .subscribe();
+
+    // 5. Subscribe to sales_reps changes
+    const repsChannel = supabase
+      .channel('sales_reps_rotation_changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'sales_reps' 
+      }, () => {
+        console.log('🔔 Sales reps changed - reloading hit counts');
+        loadHitCounts();
+      })
+      .subscribe();
+
+    // Cleanup all subscriptions
+    return () => {
+      console.log('🧹 Cleaning up rotation panel subscriptions');
+      unsubscribeHits();
+      supabase.removeChannel(replacementChannel);
+      supabase.removeChannel(leadsChannel);
+      supabase.removeChannel(nonLeadEntriesChannel);
+      supabase.removeChannel(repsChannel);
+    };
+  }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
+  
 
   // Initial load
   useEffect(() => {
@@ -234,57 +267,88 @@ useEffect(() => {
     
     loadAllData();
   }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
+
+ // Reload when salesReps changes (separate from subscriptions)
+ useEffect(() => {
+   console.log('SalesReps changed - reloading replacement marks');
+   loadReplacementMarks();
+ }, [salesReps, loadReplacementMarks])
   
-  // Real-time subscriptions
-  useEffect(() => {
-    // Subscribe to hit counts changes
-    const unsubscribeHits = subscribeHitCounts(() => {
+ // In RotationPanelMK2.tsx - Replace your subscription useEffect with this enhanced version:
+
+useEffect(() => {
+  console.log('🔄 Setting up real-time subscriptions for rotation panel');
+  
+  // 1. Subscribe to rep_hit_counts changes (ALREADY WORKING!)
+  const unsubscribeHits = subscribeHitCounts(() => {
+    console.log('🔔 Hit counts changed - refreshing rotation panel');
+    loadHitCounts();
+  });
+
+  // 2. Subscribe to replacement_marks changes
+  const replacementChannel = supabase
+    .channel('replacement_marks_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'replacement_marks' 
+    }, () => {
+      console.log('🔔 Replacement marks changed - reloading');
+      loadReplacementMarks();
+    })
+    .subscribe();
+
+  // 3. Subscribe to lead_entries changes - NOW ALSO REFRESHES HIT COUNTS!
+  const entriesChannel = supabase
+    .channel('lead_entries_rotation_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'lead_entries' 
+    }, () => {
+      console.log('🔔 Lead entries changed - reloading OOO AND hit counts');
+      loadOOOStatus();
+      loadHitCounts(); // ✅ ADDED: Also refresh hit counts when lead entries change
+    })
+    .subscribe();
+
+  // 4. Subscribe to non_lead_entries changes - NOW ALSO REFRESHES HIT COUNTS!
+  const nonLeadEntriesChannel = supabase
+    .channel('non_lead_entries_rotation_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'non_lead_entries' 
+    }, () => {
+      console.log('🔔 Non-lead entries changed - reloading OOO AND hit counts');
+      loadOOOStatus();
+      loadHitCounts(); // ✅ ADDED: Also refresh hit counts when OOO/SKP entries change
+    })
+    .subscribe();
+
+  // 5. Subscribe to sales_reps changes
+  const repsChannel = supabase
+    .channel('sales_reps_rotation_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'sales_reps' 
+    }, () => {
+      console.log('🔔 Sales reps changed - reloading hit counts');
       loadHitCounts();
-    });
-  
-    // Subscribe to replacement marks changes
-    const replacementChannel = supabase
-      .channel('replacement_marks_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'replacement_marks' 
-      }, () => {
-        loadReplacementMarks();
-      })
-      .subscribe();
-  
-    // Subscribe to lead entries changes (for OOO updates)
-    const entriesChannel = supabase
-      .channel('lead_entries_rotation_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'lead_entries' 
-      }, () => {
-        loadOOOStatus();
-      })
-      .subscribe();
-  
-    // Subscribe to sales reps changes
-    const repsChannel = supabase
-      .channel('sales_reps_rotation_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'sales_reps' 
-      }, () => {
-        loadHitCounts();
-      })
-      .subscribe();
-  
-    return () => {
-      unsubscribeHits();
-      supabase.removeChannel(replacementChannel);
-      supabase.removeChannel(entriesChannel);
-      supabase.removeChannel(repsChannel);
-    };
-  }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
+    })
+    .subscribe();
+
+  // Cleanup all subscriptions
+  return () => {
+    console.log('🧹 Cleaning up rotation panel subscriptions');
+    unsubscribeHits();
+    supabase.removeChannel(replacementChannel);
+    supabase.removeChannel(entriesChannel);
+    supabase.removeChannel(nonLeadEntriesChannel);
+    supabase.removeChannel(repsChannel);
+  };
+}, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
 
   // Get active reps for a lane (filtering out inactive and OOO)
   const getActiveRepsForLane = useCallback((lane: 'sub1k' | '1kplus'): SalesRep[] => {
