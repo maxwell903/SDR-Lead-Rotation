@@ -89,9 +89,7 @@ export function useNonLeadEntries(month?: number, year?: number) {
    * Create a single non-lead entry
    */
   const addNonLeadEntry = async (entry: Omit<NonLeadEntry, 'id' | 'createdAt' | 'updatedAt'>) => {
-    if (busy.current) return;
-    busy.current = true;
-    
+        
     try {
       const created = await createNonLeadEntry(entry);
       setState(s => ({ ...s, entries: dedupeById([created, ...s.entries]) }));
@@ -99,7 +97,7 @@ export function useNonLeadEntries(month?: number, year?: number) {
      console.log('[useNonLeadEntries] Created entry, waiting for subscription update:', created.id);
       return created;
     } catch (e: any) {
-      setState(s => ({ ...s, error: e?.message ?? 'Failed to create non-lead entry' }));
+      
       throw e;
     } finally {
       busy.current = false;
