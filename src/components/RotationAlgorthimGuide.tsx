@@ -234,7 +234,7 @@ useEffect(() => {
                   <div className="bg-green-100 rounded-lg p-3 border border-green-200">
                     <div className="font-bold text-gray-800">LRL - Lead Replacing Lead</div>
                     <div className="text-gray-700 text-sm">
-                      Replacement leads that close out a mark. We credit <span className="font-bold text-green-700">+1 hit</span> to balance the earlier MFR −1.
+                      Replacement leads that close out a mark. We credit <span className="font-bold text-gray-700">= 0 hits</span> 
                     </div>
                   </div>
                   <div className="bg-gray-100 rounded-lg p-3 border border-gray-200">
@@ -252,8 +252,8 @@ useEffect(() => {
                   <h4 className="font-semibold text-gray-800 mb-2">Net Scoring System</h4>
                   <p className="text-gray-700 text-sm leading-relaxed">
                     Each rep accumulates a net hit score. Normal leads (+1) and bad leads requiring replacement (-1) 
-                    affect the score, while replacement leads (+1) reversing essentially replaceing the lead that shouldnt have been qualified. The rep with the lowest net score 
-                    gets the next lead, ensuring fair distribution and compensation for bad leads. If any of this logic doesnt make sense or need changed for any reason, that can be done easily.
+                    affect the score, while replacement leads (+0) are given a nuetral value. This is intentional and is meant to be a free lead. 
+                    The rep with the lowest net score receives the next lead assignment. The tie breaker is the original order.
                   </p>
                 </div>
               </div>
@@ -413,9 +413,24 @@ useEffect(() => {
                 <div className="flex items-start gap-3">
                   <Info className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" />
                   <div>
-                    <h4 className="font-semibold text-gray-800 mb-2">Example Calculation</h4>
-                    <div className="font-mono text-sm text-gray-700 bg-white rounded p-2 border">
-                      Rep A: 3 NL + 1 MFR → 1 LRL = 3(+1) + 1(-1) + 1(0) = +2 net hits
+                      <h4 className="font-semibold text-gray-800 mb-2">Example Calculation</h4>
+                    {/* Hover/focus overlay that says "fill this" */}
+                    <div
+                      className="relative group font-mono text-sm text-gray-700 bg-white rounded p-2 border"
+                      tabIndex={0}
+                    >
+                      <span>
+                        Rep A: 3 NL + 1 MFR → 1 LRL = 3(+1) + 1(-1) + 1(0) = +3 net hits
+                      </span>
+                      <span
+                        className="pointer-events-none absolute inset-0 grid place-items-center rounded bg-white/95 text-orange-700 font-semibold
+                                   opacity-0 scale-95 transition-all duration-200
+                                   group-hover:opacity-100 group-hover:scale-100
+                                   group-focus-within:opacity-100 group-focus-within:scale-100"
+                        aria-hidden="true"
+                      >
+                        Delete NL: −1 hit. Delete LRL: 0 hits which reopens MFR; unmark MFR: +1 hit → NL; Full Life Cycle net 0 hits
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -689,106 +704,7 @@ useEffect(() => {
           </div>
         );
 
-      case 'Worked Example':
-        return (
-          <div className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-xl font-bold text-blue-800 mb-3">Step-by-Step Example</h2>
-              <p className="text-gray-700">
-                See how the net scoring system processes a typical rotation scenario.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-800 mb-3">Starting Scenario</h3>
-                <div className="bg-orange-100 rounded-lg p-3 border border-orange-200">
-                  <div className="font-mono text-gray-800">
-                    Base Order: A, B, C, D, E (5 reps)
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-blue-50 rounded-xl p-5 border border-blue-200">
-                <h3 className="text-lg font-semibold text-blue-800 mb-3">After Some Activity</h3>
-                <div className="space-y-2">
-                  <div className="bg-white rounded-lg p-3 border border-gray-200">
-                    <div className="font-mono text-gray-800">
-                      A: 2 NL + 1 MFR → 1 LRL = +1 net hits
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      2(+1) + 1(-1) + 1(0) = +2 - 1 + 0 = +1
-                    </div>
-                  </div>
-                  <div className="bg-white rounded-lg p-3 border border-gray-200">
-                    <div className="font-mono text-gray-800">
-                      B: 1 NL + 1 MFR = 0 net hits
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      1(+1) + 1(-1) = +1 - 1 = 0
-                    </div>
-                  </div>
-                  <div className="bg-white rounded-lg p-3 border border-gray-200">
-                    <div className="font-mono text-gray-800">
-                      C: No activity = 0 net hits
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      No entries = 0
-                    </div>
-                  </div>
-                  <div className="bg-white rounded-lg p-3 border border-gray-200">
-                    <div className="font-mono text-gray-800">
-                      D: 1 NL + 2 MFR = -1 net hits
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      1(+1) + 2(-1) = +1 - 2 = -1
-                    </div>
-                  </div>
-                  <div className="bg-white rounded-lg p-3 border border-gray-200">
-                    <div className="font-mono text-gray-800">
-                      E: 3 NL = +3 net hits
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      3(+1) = +3
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-green-50 rounded-xl p-5 border border-green-200">
-                <h3 className="text-lg font-semibold text-green-800 mb-3">Pushback Calculation</h3>
-                <div className="space-y-2">
-                  {[
-                    { rep: 'A', hits: 1, calc: '+1 net × 5 reps = 5 positions back' },
-                    { rep: 'B', hits: 0, calc: '0 net = stays in original position' },
-                    { rep: 'C', hits: 0, calc: '0 net = stays in original position' },
-                    { rep: 'D', hits: -1, calc: '-1 net × 5 reps = 5 positions forward' },
-                    { rep: 'E', hits: 3, calc: '+3 net × 5 reps = 15 positions back' },
-                  ].map((item, idx) => (
-                    <div key={idx} className="bg-white rounded-lg p-3 border border-green-200">
-                      <div className="font-bold text-gray-800">{item.rep}: {item.hits >= 0 ? '+' : ''}{item.hits} net hits</div>
-                      <div className="text-sm text-gray-700">{item.calc}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-orange-50 rounded-xl p-4 border border-orange-200">
-                <div className="flex items-start gap-3">
-                  <Info className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <h4 className="font-semibold text-gray-800 mb-2">Result</h4>
-                    <p className="text-gray-700 text-sm leading-relaxed">
-                      Rep D has the lowest net score (-1) due to receiving bad leads that required replacement.
-                      This negative score moves them forward in the rotation, so they get the next lead as compensation.
-                      The system ensures fairness by rewarding reps who received poor quality leads.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
+      
 
       default:
         return null;

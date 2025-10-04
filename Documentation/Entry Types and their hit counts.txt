@@ -1,0 +1,17 @@
+Every Action that registers a hit
+
+NL = +1
+
+Delete NL = -1
+
+MFR = -1
+
+MFR_UNMARKED = + 1
+
+LRL = + 0
+
+Delete LRL = -0
+
+
+
+

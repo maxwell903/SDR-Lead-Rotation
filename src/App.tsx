@@ -878,54 +878,33 @@ if (entry?.type === 'lead' && entry.leadId) {
     if (entry) {
        if (entry.leadId) {
   try {
-    // Hit accounting before deletion (we still have full context)
-    // 1) Is this an OPEN MFR? (original lead was marked and has NOT been replaced yet)
-     const recForOriginal = replacementState.byLeadId?.[entry.leadId];
-     const isOpenMFR = !!recForOriginal && !recForOriginal.replacedByLeadId;
+    // Keep: Detection logic for LRL and MFR
+    const recForOriginal = replacementState.byLeadId?.[entry.leadId];
+    const isOpenMFR = !!recForOriginal && !recForOriginal.replacedByLeadId;
 
-     // 2) Is this an LRL? (this lead is referenced as a replacement on some original)
-     const isReplacementLead = Object.values(replacementState.byLeadId || {}).some(
-       (rec) => rec?.replacedByLeadId === entry.leadId
-     );
+    const isReplacementLead = Object.values(replacementState.byLeadId || {}).some(
+      (rec) => rec?.replacedByLeadId === entry.leadId
+    );
 
-     // Lane comes from the mark if it's an MFR; otherwise fall back to unit-based lane
-     const lane = isOpenMFR
-       ? (recForOriginal!.lane as 'sub1k' | '1kplus')
-       : getLaneFromUnits(entry.unitCount);
+    // 🔥 REMOVED: Only the duplicate hit count creation block
+    // Previously this created NL -1 or LRL 0 here, but deleteLeadWithReplacementHandling 
+    // already handles all hit counting internally
+    
+    // Keep: The actual deletion (which handles hit counts internally)
+    await removeLead(entry.leadId);
+    
+    // Keep: Force immediate UI refresh for LRL deletions
+    if (isReplacementLead) {
+      console.log('LRL deleted - forcing replacement state refresh');
+      await new Promise(resolve => setTimeout(resolve, 300)); // Wait for DB propagation
+    }
 
-     // Hit semantics on delete:
-     // - Deleting LRL -> LRL -1
-     // - Else (normal lead) -> NL -1
-     // NOTE: OPEN MFR deletion is now blocked above, so no need for MFR 0 logic
-     const hitType = isReplacementLead ? 'LRL' : 'NL';
-const hitValue = isReplacementLead ? 0 : -1;  // 🚨 LRL = 0, NL = -1
-
-await createHitCount({
-  repId: entry.repId,
-  // DON'T pass leadEntryId for lead-level hits
-  hitType,
-  hitValue,
-  lane,
-  month: currentDate.getMonth() + 1,
-  year: currentDate.getFullYear(),
-});
-
-     await removeLead(entry.leadId);
-     
-     // NEW: Force immediate UI refresh for LRL deletions
-     if (isReplacementLead) {
-       console.log('LRL deleted - forcing replacement state refresh');
-       // Find the replacement state hook and call its refresh function
-       // This will be handled by the subscription, but we can also manually refresh
-       await new Promise(resolve => setTimeout(resolve, 300)); // Wait for DB propagation
-     }
-
-     console.log('Lead deleted successfully with replacement handling');
-   } catch (error) {
-     console.error('Failed to delete lead from database:', error);
-     alert('Failed to delete lead. Please try again.');
-   }
-   return; // Early return for leads
+    console.log('Lead deleted successfully with replacement handling');
+  } catch (error) {
+    console.error('Failed to delete lead from database:', error);
+    alert('Failed to delete lead. Please try again.');
+  }
+  return; // Early return for leads
 }
       
       
