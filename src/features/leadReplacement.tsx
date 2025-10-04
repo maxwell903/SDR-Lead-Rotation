@@ -399,21 +399,7 @@ export const ReplacementPill: React.FC<{
   );
 };
 
-/** Small "Mark for Replacement" button */
-export const MarkForReplacementButton: React.FC<{
-  onClick: React.MouseEventHandler<HTMLButtonElement>;
-  disabled?: boolean;
-}> = ({ onClick, disabled }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    disabled={disabled}
-    title="Mark this lead as needing replacement"
-    className="p-1 text-orange-600 hover:text-orange-700 disabled:opacity-50 text-xs"
-  >
-    Replace
-  </button>
-);
+
 
 /** Find the counterpart lead id for labels */
 export function getReplacementPartnerLeadId(

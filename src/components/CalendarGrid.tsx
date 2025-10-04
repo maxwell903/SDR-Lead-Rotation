@@ -5,7 +5,6 @@ import {
   ReplacementState,
   getCalendarEntryVisual,
   getReplacementPartnerLeadId,
-  MarkForReplacementButton,
   ReplacementPill,
 } from '../features/leadReplacement.tsx';
 import CalendarViewOptions from './CalendarViewOptions';
@@ -44,7 +43,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   onRemoveReplacementMark,
 }) => {
   // State management
-  const [zoomLevel, setZoomLevel] = useState(100);
+  const [zoomLevel, setZoomLevel] = useState(50); // max percent
   const [rowHeight, setRowHeight] = useState(60);
   const [columnWidth, setColumnWidth] = useState(140);
   const [showDayOfMonth, setShowDayOfMonth] = useState(true);
@@ -219,34 +218,33 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   }, [zoomLevel, rowHeight, columnWidth]);
 
   // UPDATED: Modified to consider rotation context
-  const getEntriesForCell = (day: number, repId: string, rotationContext: 'sub1k' | '1kplus') => {
-    return leadEntries.filter(entry => {
-      if (entry.day !== day || entry.repId !== repId) {
+  
+const getEntriesForCell = (day: number, repId: string, rotationContext: 'sub1k' | '1kplus') => {
+  return leadEntries.filter(entry => {
+    if (entry.day !== day || entry.repId !== repId) {
+      return false;
+    }
+    
+    // For non-lead entries (skip, ooo, next), use rotationTarget if available
+    if (entry.type !== 'lead') {
+      if (entry.rotationTarget) {
+        if (entry.rotationTarget === 'both') return true;
+        if (entry.rotationTarget === 'sub1k' && rotationContext === 'sub1k') return true;
+        if (entry.rotationTarget === 'over1k' && rotationContext === '1kplus') return true;
         return false;
       }
-      
-      // For non-lead entries (skip, ooo, next), use rotationTarget if available
-      if (entry.type !== 'lead') {
-        if (entry.rotationTarget) {
-          if (entry.rotationTarget === 'both') return true;
-          if (entry.rotationTarget === 'sub1k' && rotationContext === 'sub1k') return true;
-          if (entry.rotationTarget === 'over1k' && rotationContext === '1kplus') return true;
-          return false;
-        }
-        // Fallback for entries without rotationTarget - show in both (backwards compatibility)
-        return true;
-      }
-      
-      // For lead entries, determine rotation based on unit count
-      // Note: entry.unitCount might be undefined for older entries, so we need to check the lead data
-      if (entry.unitCount !== undefined) {
-        const isOver1k = entry.unitCount >= 1000;
-        return rotationContext === '1kplus' ? isOver1k : !isOver1k;
-      }
-      
-      // Fallback for entries without unit count - show in both (backwards compatibility)
+      // Fallback for entries without rotationTarget - show in both (backwards compatibility)
       return true;
-    });
+    }
+    
+    // For lead entries, determine rotation based on unit count
+    // FIXED: Treat null/undefined unitCount as sub-1k (under 1000 units)
+    const unitCount = entry.unitCount ?? 0; // Default to 0 if null/undefined
+    const isOver1k = unitCount >= 1000;
+    return rotationContext === '1kplus' ? isOver1k : !isOver1k;
+      });
+      
+      
   };
 
   const getCellStyle = (entries: LeadEntry[], day: number) => {
@@ -313,74 +311,113 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
 
 
   
-  // Function to render entry content with hyperlink support
-  const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
-    if (entry.type === 'lead' && entry.leadId) {
-      const visualInfo = getCalendarEntryVisual(entry, replacementState);
-      const partner = getReplacementPartnerLeadId(entry, replacementState);
-      
-      if (visualInfo.isOriginalMarkedClosed && partner.partnerLeadId) {
-        // RLBR - Original lead that has been replaced (grey, smaller, with message)
-        const partnerLead = leads.find(l => l.id === partner.partnerLeadId);
-        return (
-          <div className="space-y-1 scale-90 opacity-75">
-            <div className="line-through text-xs font-normal">{entry.value}</div>
-            <div className="text-[9px] text-gray-500 italic">
-              Replaced by {partnerLead?.accountNumber || 'N/A'}
-            </div>
-          </div>
-        );
-      } else if (visualInfo.isReplacementLead && partner.partnerLeadId) {
-        // LRL - Lead that is replacing another lead (enhanced display)
-        const originalLead = leads.find(l => l.id === partner.partnerLeadId);
-        return (
-          <div className="space-y-1">
-            <div className="font-semibold">{entry.value}</div>
-            <div className="text-[10px] text-emerald-600 font-medium">
-              Replaces {originalLead?.accountNumber || 'N/A'}
-            </div>
-          </div>
-        );
-      } else if (visualInfo.isOriginalMarkedOpen) {
-        // MFR - Marked for replacement but not yet replaced
-        return (
-          <div className="flex items-center justify-between">
-            <span className="truncate">{entry.value}</span>
-            <ReplacementPill relation="needs" text="MFR" />
-          </div>
-        );
-      } else {
-        // NL - Normal lead
-        return <span className="truncate">{entry.value}</span>;
-      }
-    }
+  // Key changes for account number hover hyperlink:
+// 1. Wrap account number in a clickable link element
+// 2. Add hover state to show underline and pointer cursor
+// 3. Ensure URL opens correctly when clicked
+
+// In the renderEntryContent function, update the account number rendering:
+
+const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
+  if (entry.type === 'lead' && entry.leadId) {
+    const visualInfo = getCalendarEntryVisual(entry, replacementState);
+    const partner = getReplacementPartnerLeadId(entry, replacementState);
+    const url = getEntryUrl(entry);
     
- 
-      // Non-lead entries (skip, ooo, next)
-    if (entry.type === 'ooo') {
+    // Helper function to render clickable account number
+    const AccountNumberLink = ({ accountNumber }: { accountNumber: string }) => {
+      if (url) {
+        return (
+          <a
+            href={url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleHyperlinkClick(e as any, entry);
+            }}
+            className="hover:underline hover:text-blue-600 cursor-pointer transition-colors duration-150"
+          >
+            {accountNumber}
+          </a>
+        );
+      }
+      return <span>{accountNumber}</span>;
+    };
+    
+    if (visualInfo.isOriginalMarkedClosed && partner.partnerLeadId) {
+      // RLBR - Original lead that has been replaced (grey, smaller, with message)
+      const partnerLead = leads.find(l => l.id === partner.partnerLeadId);
       return (
-        <div className="space-y-0.5">
-          <div className="font-medium">OOO</div>
-          {entry.time && (
-            <div className="text-[10px] text-red-600">{entry.time}</div>
-          )}
+        <div className="space-y-1 scale-90 opacity-75">
+          <div className="line-through text-xs font-normal">
+            <AccountNumberLink accountNumber={entry.value} />
+          </div>
+          <div className="text-[9px] text-gray-500 italic">
+            Replaced by {partnerLead?.accountNumber || 'N/A'}
+          </div>
         </div>
       );
+    } else if (visualInfo.isReplacementLead && partner.partnerLeadId) {
+      // LRL - Lead that is replacing another lead (enhanced display)
+      const originalLead = leads.find(l => l.id === partner.partnerLeadId);
+      return (
+        <div className="space-y-1">
+          <div className="font-semibold">
+            <AccountNumberLink accountNumber={entry.value} />
+          </div>
+          <div className="text-[10px] text-emerald-600 font-medium">
+            Replaces {originalLead?.accountNumber || 'N/A'}
+          </div>
+        </div>
+      );
+    } else if (visualInfo.isOriginalMarkedOpen) {
+      // MFR - Marked for replacement but not yet replaced
+      return (
+        <div className="flex items-center justify-between">
+          <span className="truncate">
+            <AccountNumberLink accountNumber={entry.value} />
+          </span>
+          <ReplacementPill relation="needs" text="MFR" />
+        </div>
+      );
+    } else {
+      // NL - Normal lead
+      return (
+        <span className="truncate">
+          <AccountNumberLink accountNumber={entry.value} />
+        </span>
+      );
     }
-    
-    if (entry.type === 'skip') {
-      return <span className="italic">Skip</span>;
-    }
-    
-    if (entry.type === 'next') {
-     return <span className="font-medium">NEXT</span>;
-    }
-    
-    return <span className="italic">{entry.value}</span>;
-  };
+  }
+  
+  // Non-lead entries (skip, ooo, next)
+  if (entry.type === 'ooo') {
+    return (
+      <div className="space-y-0.5">
+        <div className="font-medium">OOO</div>
+        {entry.time && (
+          <div className="text-[10px] text-red-600">{entry.time}</div>
+        )}
+      </div>
+    );
+  }
+  
+  if (entry.type === 'skip') {
+    return <span className="italic">Skip</span>;
+  }
+  
+  if (entry.type === 'next') {
+    return <span className="font-medium">NEXT</span>;
+  }
+  
+  return <span className="italic">{entry.value}</span>;
+};
 
   // Keep this INSIDE the component
-  // Enhanced hover handler for LRL/RLBR partner animation
+ 
+  
+    // Minimal hover handler for LRL/RLBR partner animation
   const handleEntryHover = (entry: LeadEntry, isHovering: boolean) => {
     if (entry.type === 'lead' && entry.leadId) {
       const partner = getReplacementPartnerLeadId(entry, replacementState);
@@ -390,25 +427,18 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
         
         if (partnerElement && currentElement) {
           if (isHovering) {
-            // Add enhanced animation classes for both elements
-            partnerElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
-            currentElement.classList.add('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
-            // Add slight scale effect
-            partnerElement.style.transform = 'scale(1.02)';
-            currentElement.style.transform = 'scale(1.02)';
+            // Very subtle highlight - just a thin border
+            partnerElement.classList.add('ring-1', 'ring-blue-300');
+            currentElement.classList.add('ring-1', 'ring-blue-300');
           } else {
-            // Remove all animation classes
-            partnerElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
-            currentElement.classList.remove('animate-pulse', 'ring-2', 'ring-blue-400', 'shadow-lg', 'z-10');
-            // Reset scale
-            partnerElement.style.transform = '';
-            currentElement.style.transform = '';
+            // Remove highlight
+            partnerElement.classList.remove('ring-1', 'ring-blue-300');
+            currentElement.classList.remove('ring-1', 'ring-blue-300');
           }
         }
       }
     }
   };
-
 
   return (
     <div className="bg-white rounded-lg shadow-sm border" style={containerStyles}>
@@ -613,61 +643,28 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
 
                               {/* Hover actions */}
                               <div className="hidden group-hover:flex items-center space-x-1 ml-2">
-                                {entry.type === 'lead' && entry.leadId && (() => {
-                                  const vis = getCalendarEntryVisual(entry, replacementState);
-                                  if (vis.isOriginalMarkedOpen) {
-                                    return (
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          onRemoveReplacementMark(entry.leadId!);
-                                        }}
-                                        className="p-1 text-gray-600 hover:text-gray-800 text-xs"
-                                        title="Remove replacement mark"
-                                      >
-                                        Unmark
-                                      </button>
-                                    );
-                                  } else if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen && !vis.isOriginalMarkedClosed) {
-                                    return (
-                                      <MarkForReplacementButton
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          onMarkForReplacement(entry.leadId!);
-                                        }}
-                                      />
-                                    );
-                                  }
-                                  return null;
-                                })()}
+                                {/* Hover actions */}
+<div className="hidden group-hover:flex items-center space-x-1 ml-2">
+  {/* Edit and Delete buttons */}
+  <button
+    onClick={(e) => {
+      e.stopPropagation();
+      if (entry.type === 'lead') {
+        const lead = getLeadForEntry(entry);
+        if (lead) onEditLead(lead);
+      } else {
+        handleEntryAction(e, 'edit', entry);
+      }
+    }}
+    className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
+    title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
+  >
+    <Edit className="w-3 h-3" />
+  </button>
+  
+</div>
                                 
-                                {/* Edit and Delete buttons */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (entry.type === 'lead') {
-                                      const lead = getLeadForEntry(entry);
-                                      if (lead) onEditLead(lead);
-                                    } else {
-                                      handleEntryAction(e, 'edit', entry);
-                                    }
-                                  }}
-                                  className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
-                                  title={entry.type === 'lead' ? "Edit lead" : "Edit entry"}
-                                >
-                                  ✏️
-                                </button>
                                 
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDeleteEntry(entry.id);
-                                  }}
-                                  className="p-1 text-gray-400 hover:text-red-600 transition-colors rounded"
-                                  title="Delete entry"
-                                >
-                                  🗑️
-                                </button>
                               </div>
                             </div>
                           ))
@@ -714,35 +711,9 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                               
                              {/* NEW: hover actions include "Replace" for leads not already in replacement flow */}
                               {/* Hover actions include "Replace" and "Unmark" */}
-<div className="hidden group-hover:flex items-center space-x-1 ml-2">
-  {entry.type === 'lead' && entry.leadId && (() => {
-    const vis = getCalendarEntryVisual(entry, replacementState);
-    if (vis.isOriginalMarkedOpen) {
-      return (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemoveReplacementMark(entry.leadId!);
-          }}
-          className="p-1 text-gray-600 hover:text-gray-800 text-xs"
-          title="Remove replacement mark"
-        >
-          Unmark
-        </button>
-      );
-     } else if (!vis.isReplacementLead && !vis.isOriginalMarkedOpen && !vis.isOriginalMarkedClosed) {
-      return (
-        <MarkForReplacementButton
-          onClick={(e) => {
-            e.stopPropagation();
-            onMarkForReplacement(entry.leadId!);
-          }}
-        />
-      );
-    }
-    return null;
-  })()}
-  {/* ... existing edit and delete buttons */}
+                              <div className="hidden group-hover:flex items-center space-x-1 ml-2">
+  
+
                                <button
                                  onClick={(e) => {
                                     e.stopPropagation();
@@ -758,13 +729,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
                                >
                                   <Edit className="w-3 h-3" />
                                </button>
-                               <button
-                                  onClick={(e) => handleEntryAction(e, 'delete', entry)}
-                                  className="p-1 text-gray-400 hover:text-red-600 transition-colors rounded"
-                                  title="Delete entry"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
+                               
                               </div>
                             </div>
                           ))
