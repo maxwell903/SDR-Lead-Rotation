@@ -397,13 +397,13 @@ useEffect(() => {
                   <div className="bg-white rounded-lg p-3 border border-gray-100">
                     <div className="font-bold text-gray-800">Lead Replacing Lead (LRL)</div>
                     <div className="text-gray-700 text-sm">
-                      Replacement leads that replace marked leads. Each LRL adds +1 to hit count (same as NL). The original MFR (-1) plus LRL (+1) nets to 0.
+                      Replacement leads that replace marked leads. Each LRL adds nothing to hit count . Lead that was NL (+1) and the MFR (-1) and LRL (0) all net to 0 hits resulting in a 'Free Lead' with that LRL. This is intended to make up for the time they were skipped while the NL was not marked for replacment.
                     </div>
                   </div>
                   <div className="bg-white rounded-lg p-3 border border-gray-100">
                     <div className="font-bold text-gray-800">Lead That's Replaced (LTR)</div>
                     <div className="text-gray-700 text-sm">
-                      Original leads that have been replaced. These become neutral and don't count toward hits.
+                      Original leads that have been replaced. These become neutral and don't count toward hits. It just shows the account number of the lead you replaced it with.
                     </div>
                   </div>
                 </div>
@@ -420,7 +420,7 @@ useEffect(() => {
                       tabIndex={0}
                     >
                       <span>
-                        Rep A: 3 NL + 1 MFR → 1 LRL = 3(+1) + 1(-1) + 1(0) = +3 net hits
+                        Rep A: 3 NL + 1(1 NL → 1 MFR → (1 LRL ⇄ 1 LTR) = 3(+1) + 1(1 - 1 + (0 + 0)) = +3 net hits
                       </span>
                       <span
                         className="pointer-events-none absolute inset-0 grid place-items-center rounded bg-white/95 text-orange-700 font-semibold
@@ -429,7 +429,7 @@ useEffect(() => {
                                    group-focus-within:opacity-100 group-focus-within:scale-100"
                         aria-hidden="true"
                       >
-                        Delete NL: −1 hit. Delete LRL: 0 hits which reopens MFR; unmark MFR: +1 hit → NL; Full Life Cycle net 0 hits
+                       Deletes of any type just reverses the action
                       </span>
                     </div>
                   </div>

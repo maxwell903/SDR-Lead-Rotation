@@ -44,6 +44,7 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
   const [expandedSub1k, setExpandedSub1k] = useState(false);
   const [expanded1kPlus, setExpanded1kPlus] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [oooTargets, setOooTargets] = useState<Map<string, string>>(new Map());
   
   const month = viewingMonth + 1; // Convert from 0-based to 1-based
   const year = viewingYear;
@@ -88,30 +89,136 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
       console.error('Error loading replacement marks:', error);
     }
   }, [salesReps]);
+
+  const parseTimeString = (timeStr: string, day: number, month: number, year: number): Date | null => {
+  if (!timeStr) return null;
+  
+  try {
+    // Handle both "HH:MM" and "HH:MM AM/PM" formats
+    const timeParts = timeStr.trim().match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!timeParts) return null;
+    
+    let hours = parseInt(timeParts[1]);
+    const minutes = parseInt(timeParts[2]);
+    const meridiem = timeParts[3]?.toUpperCase();
+    
+    // Convert to 24-hour format if AM/PM is specified
+    if (meridiem === 'PM' && hours !== 12) {
+      hours += 12;
+    } else if (meridiem === 'AM' && hours === 12) {
+      hours = 0;
+    }
+    
+    // Create date object for today with the specified time
+    const oooDateTime = new Date(year, month - 1, day, hours, minutes, 0, 0);
+    return oooDateTime;
+  } catch (error) {
+    console.error('Error parsing time string:', timeStr, error);
+    return null;
+  }
+};
+
   
   const loadOOOStatus = useCallback(async () => {
-    try {
-      const today = new Date();
-      const { data: oooData, error } = await supabase
-        .from('lead_entries')
-        .select('rep_id')
-        .eq('type', 'ooo')
-        .eq('day', today.getDate())
-        .eq('month', today.getMonth() + 1)
-        .eq('year', today.getFullYear());
-  
-      if (error) throw error;
-  
-      const oooSet = new Set<string>();
-      oooData?.forEach((entry: any) => {
-        if (entry.rep_id) oooSet.add(entry.rep_id);
-      });
+  try {
+    const now = new Date();
+    const today = {
+      day: now.getDate(),
+      month: now.getMonth() + 1,
+      year: now.getFullYear()
+    };
+    
+    // Get OOO entries from non_lead_entries table for today
+    const { data: oooData, error } = await supabase
+      .from('non_lead_entries')
+      .select('rep_id, time, rotation_target')
+      .eq('entry_type', 'OOO')
+      .eq('day', today.day)
+      .eq('month', today.month)
+      .eq('year', today.year);
+
+    if (error) throw error;
+
+    const oooSet = new Set<string>();
+    const oooTargets = new Map<string, string>(); // repId -> rotation_target
+    
+    // Only add to OOO set if the time has passed
+    oooData?.forEach((entry: any) => {
+      if (!entry.rep_id) return;
       
-      setOooReps(oooSet);
-    } catch (error) {
-      console.error('Error loading OOO status:', error);
-    }
-  }, []);
+      // If no time specified, assume they're OOO immediately
+      if (!entry.time) {
+        oooSet.add(entry.rep_id);
+        oooTargets.set(entry.rep_id, entry.rotation_target || 'both');
+        return;
+      }
+      
+      // Parse the OOO time (format: "HH:MM" or "HH:MM AM/PM")
+      const oooTime = parseTimeString(entry.time, today.day, today.month, today.year);
+      
+      // Only mark as OOO if the specified time has passed
+      if (oooTime && now >= oooTime) {
+        oooSet.add(entry.rep_id);
+        oooTargets.set(entry.rep_id, entry.rotation_target || 'both');
+      }
+    });
+    
+    setOooReps(oooSet);
+    setOooTargets(oooTargets); // You'll need to add this state
+  } catch (error) {
+    console.error('Error loading OOO status:', error);
+  }
+}, []);
+
+useEffect(() => {
+  // Subscribe to hit counts changes
+  const unsubscribeHits = subscribeHitCounts(() => {
+    loadHitCounts();
+  });
+
+  // Subscribe to replacement marks changes
+  const replacementChannel = supabase
+    .channel('replacement_marks_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'replacement_marks' 
+    }, () => {
+      loadReplacementMarks();
+    })
+    .subscribe();
+
+  // Subscribe to non_lead_entries changes (for OOO updates)
+  const nonLeadEntriesChannel = supabase
+    .channel('non_lead_entries_rotation_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'non_lead_entries' 
+    }, () => {
+      loadOOOStatus();
+    })
+    .subscribe();
+
+  // Subscribe to sales reps changes
+  const repsChannel = supabase
+    .channel('sales_reps_rotation_changes')
+    .on('postgres_changes', { 
+      event: '*', 
+      schema: 'public', 
+      table: 'sales_reps' 
+    }, () => {
+      loadHitCounts();
+    })
+    .subscribe();
+
+  return () => {
+    unsubscribeHits();
+    supabase.removeChannel(replacementChannel);
+    supabase.removeChannel(nonLeadEntriesChannel);
+    supabase.removeChannel(repsChannel);
+  };
+}, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
 
   // Initial load
   useEffect(() => {
@@ -181,21 +288,64 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
 
   // Get active reps for a lane (filtering out inactive and OOO)
   const getActiveRepsForLane = useCallback((lane: 'sub1k' | '1kplus'): SalesRep[] => {
-    let reps = salesReps.filter(rep => rep.status === 'active');
+  let reps = salesReps.filter(rep => rep.status === 'active');
+  
+  // Filter for 1k+ capable reps only for 1kplus lane
+  if (lane === '1kplus') {
+    reps = reps.filter(rep => {
+      const params = rep.parameters as any;
+      return params?.canHandle1kPlus === true;
+    });
+  }
+   // Exclude OOO reps based on their rotation target
+  reps = reps.filter(rep => {
+    if (!oooReps.has(rep.id)) return true;
     
-    // Filter for 1k+ capable reps only for 1kplus lane
-    if (lane === '1kplus') {
-      reps = reps.filter(rep => {
-        const params = rep.parameters as any;
-        return params?.canHandle1kPlus === true;
-      });
-    }
+    const target = oooTargets.get(rep.id);
+    if (!target || target === 'both') return false; // Exclude from both lanes
+    if (target === 'sub1k' && lane === 'sub1k') return false; // Exclude from sub1k only
+    if (target === 'over1k' && lane === '1kplus') return false; // Exclude from 1k+ only
     
-    // Exclude OOO reps
-    reps = reps.filter(rep => !oooReps.has(rep.id));
+    return true; // Include if target doesn't affect this lane
+  });
+  
+  return reps;
+}, [salesReps, oooReps, oooTargets]);
+
+// Auto-refresh every 2 minutes
+useEffect(() => {
+  // Initial load
+  loadOOOStatus();
+  
+  // Set up 2-minute interval
+  const oooInterval = setInterval(() => {
+    loadOOOStatus();
+  }, 2 * 60 * 1000); // 2 minutes in milliseconds
+  
+  return () => clearInterval(oooInterval);
+}, [loadOOOStatus]);
+
+useEffect(() => {
+  const checkMidnightReset = () => {
+    const now = new Date();
+    const secondsUntilMidnight = (24 * 60 * 60) - 
+      (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds());
     
-    return reps;
-  }, [salesReps, oooReps]);
+    // Set timeout to trigger at midnight
+    const midnightTimeout = setTimeout(() => {
+      console.log('Midnight reset - clearing OOO status');
+      loadOOOStatus(); // This will reload for the new day
+      
+      // Set up next midnight check
+      checkMidnightReset();
+    }, secondsUntilMidnight * 1000);
+    
+    return () => clearTimeout(midnightTimeout);
+  };
+  
+  const cleanup = checkMidnightReset();
+  return cleanup;
+}, [loadOOOStatus]);
   
   // Get original order for a lane
   const getOriginalOrder = useCallback((lane: 'sub1k' | '1kplus'): string[] => {
