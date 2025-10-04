@@ -8,6 +8,7 @@ import {
   MarkForReplacementButton,
   ReplacementPill,
 } from '../features/leadReplacement.tsx';
+import CalendarViewOptions from './CalendarViewOptions';
 
 interface CalendarGridProps {
   salesReps: SalesRep[];
@@ -413,170 +414,29 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     <div className="bg-white rounded-lg shadow-sm border" style={containerStyles}>
       {/* Header with controls */}
       <div className="p-4 border-b">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex justify-between items-center">
           <h3 className="text-lg font-semibold">Lead Rotation Calendar</h3>
           
-          {/* Zoom Controls */}
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={zoomOut}
-              className="flex items-center space-x-1 px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-              disabled={zoomLevel <= 50}
-            >
-              <ZoomOut className="w-4 h-4" />
-              <span>Zoom Out</span>
-            </button>
-            
-            <span className="text-sm font-medium bg-gray-50 px-3 py-1 rounded-md">
-              {zoomLevel}%
-            </span>
-            
-            <button
-              onClick={zoomIn}
-              className="flex items-center space-x-1 px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-              disabled={zoomLevel >= 150}
-            >
-              <ZoomIn className="w-4 h-4" />
-              <span>Zoom In</span>
-            </button>
-            
-            <button
-              onClick={resetZoom}
-              className="flex items-center space-x-1 px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>Reset</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Size and Format Controls */}
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-          {/* Row Height Slider */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
-              Cell Height: {rowHeight}px
-            </label>
-            <input
-              type="range"
-              min="40"
-              max="120"
-              value={rowHeight}
-              onChange={(e) => setRowHeight(Number(e.target.value))}
-              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              style={{
-                background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((rowHeight - 40) / (120 - 40)) * 100}%, #e5e7eb ${((rowHeight - 40) / (120 - 40)) * 100}%, #e5e7eb 100%)`
-              }}
-            />
-          </div>
-
-          {/* Column Width Slider */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
-              Cell Width: {columnWidth}px
-            </label>
-            <input
-              type="range"
-              min="100"
-              max="250"
-              value={columnWidth}
-              onChange={(e) => setColumnWidth(Number(e.target.value))}
-              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              style={{
-                background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((columnWidth - 100) / (250 - 100)) * 100}%, #e5e7eb ${((columnWidth - 100) / (250 - 100)) * 100}%, #e5e7eb 100%)`
-              }}
-            />
-          </div>
-
-          {/* Date Format Toggles */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">Date Format</label>
-            <div className="flex flex-col space-y-2">
-              <label className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={showDayOfMonth}
-                  onChange={(e) => setShowDayOfMonth(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-600">Show Day of Month</span>
-              </label>
-              <label className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={showDayOfWeek}
-                  onChange={(e) => setShowDayOfWeek(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-600">Show Day of Week</span>
-              </label>
-            </div>
-          </div>
-
-          {/* Restriction Display Toggles */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">Rep Restrictions</label>
-            <div className="flex flex-col space-y-2">
-              <label className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={showRestrictions}
-                  onChange={(e) => setShowRestrictions(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-600">Show Restrictions</span>
-              </label>
-              {showRestrictions && (
-                <>
-                  <label className="flex items-center space-x-2 ml-4">
-                    <input
-                      type="checkbox"
-                      checked={showCanDo}
-                      onChange={(e) => setShowCanDo(e.target.checked)}
-                      className="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
-                    />
-                    <span className="text-sm text-gray-600">Restrictions</span>
-                  </label>
-                  <label className="flex items-center space-x-2 ml-4">
-                    <input
-                      type="checkbox"
-                      checked={showCantDo}
-                      onChange={(e) => setShowCantDo(e.target.checked)}
-                      className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-500"
-                    />
-                    <span className="text-sm text-gray-600">Permissions</span>
-                  </label>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Legend */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">Legend</label>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="flex items-center space-x-1">
-                <div className="w-3 h-3 bg-blue-100 border border-blue-200 rounded"></div>
-                <span>Lead</span>
-              </div>
-              <div className="flex items-center space-x-1">
-                <div className="w-3 h-3 bg-yellow-100 border border-yellow-200 rounded"></div>
-                <span>Skip</span>
-              </div>
-              <div className="flex items-center space-x-1">
-                <div className="w-3 h-3 bg-red-100 border border-red-200 rounded"></div>
-                <span>OOO</span>
-              </div>
-              <div className="flex items-center space-x-1">
-                <div className="w-3 h-3 bg-green-100 border border-green-200 rounded"></div>
-                <span>Next</span>
-              </div>
-              <div className="flex items-center space-x-1">
-                <ExternalLink className="w-3 h-3 text-blue-600" />
-                <span>Clickable Link</span>
-              </div>
-            </div>
-          </div>
+          <CalendarViewOptions
+            zoomLevel={zoomLevel}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onResetZoom={resetZoom}
+            rowHeight={rowHeight}
+            onRowHeightChange={setRowHeight}
+            columnWidth={columnWidth}
+            onColumnWidthChange={setColumnWidth}
+            showDayOfMonth={showDayOfMonth}
+            onShowDayOfMonthChange={setShowDayOfMonth}
+            showDayOfWeek={showDayOfWeek}
+            onShowDayOfWeekChange={setShowDayOfWeek}
+            showRestrictions={showRestrictions}
+            onShowRestrictionsChange={setShowRestrictions}
+            showCanDo={showCanDo}
+            onShowCanDoChange={setShowCanDo}
+            showCantDo={showCantDo}
+            onShowCantDoChange={setShowCantDo}
+          />
         </div>
       </div>
       
