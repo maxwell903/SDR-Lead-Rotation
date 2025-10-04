@@ -704,6 +704,151 @@ useEffect(() => {
           </div>
         );
 
+         case 'Worked Example':
+  return (
+    <div className="space-y-6">
+      <div className="text-center">
+        <h2 className="text-xl font-bold text-blue-800 mb-3">OOO & Skip Entries Explained</h2>
+        <p className="text-gray-700">
+          Understanding how Out of Office (OOO) and Skip entries affect the rotation.
+        </p>
+      </div>
+
+      {/* Skip Entries Section */}
+      <div className="bg-yellow-50 rounded-xl p-5 border border-yellow-200">
+        <h3 className="text-lg font-semibold text-yellow-800 mb-4 flex items-center gap-2">
+          <span className="bg-yellow-600 text-white px-2 py-1 rounded text-sm">SKP</span>
+          Skip Entries
+        </h3>
+        
+        <div className="space-y-4">
+          <div className="bg-white rounded-lg p-4 border border-yellow-100">
+            <div className="font-bold text-gray-800 mb-2">What is a Skip?</div>
+            <div className="text-gray-700 text-sm">
+              A Skip entry counts as <span className="font-bold text-yellow-700">+1 hit</span> for a rep without assigning an actual lead. 
+              Used when a rep needs to be pushed back in rotation for any reason but is typically added after giving a lead to a Rep that is Directly after an OOO.
+              
+            </div>
+            <div className="font-bold text-gray-700 text-sm">
+              Example:
+            </div>
+             <div className="text-gray-700 text-sm">
+               Orig Order: 1.A, 2.B, 3.C
+            </div>
+            <div className="text-gray-700 text-sm">
+              B is marked as OOO at 2:00pm: Give Lead to C at 2:05 pm and add a Skip to B at 2:05pm so B moves back one cycle.
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg p-4 border border-yellow-100">
+            <div className="font-bold text-gray-800 mb-2">Rotation Target Options</div>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-start gap-2">
+                <span className="font-semibold text-gray-700 min-w-20">Sub 1K:</span>
+                <span className="text-gray-600">Only affects the Sub $1K rotation (+1 hit in that lane only)</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-semibold text-gray-700 min-w-20">1K+:</span>
+                <span className="text-gray-600">Only affects the $1K+ rotation (+1 hit in that lane only)</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-semibold text-gray-700 min-w-20">Both:</span>
+                <span className="text-gray-600">Affects both rotations (+1 hit in Sub 1K AND +1 hit in 1K+)</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-yellow-100 rounded-lg p-3 border border-yellow-200">
+            <div className="font-mono text-sm text-gray-800">
+              <strong>Example:</strong> Rep A gets a Skip with target "both"<br/>
+              Result: Rep A gets +1 in Sub 1K rotation AND +1 in 1K+ rotation<br/>
+              Effect: Rep A moves back one full cycle in BOTH rotations
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* OOO Entries Section */}
+      <div className="bg-red-50 rounded-xl p-5 border border-red-200">
+        <h3 className="text-lg font-semibold text-red-800 mb-4 flex items-center gap-2">
+          <span className="bg-red-600 text-white px-2 py-1 rounded text-sm">OOO</span>
+          Out of Office Entries
+        </h3>
+        
+        <div className="space-y-4">
+          <div className="bg-white rounded-lg p-4 border border-red-100">
+            <div className="font-bold text-gray-800 mb-2">What is OOO?</div>
+            <div className="text-gray-700 text-sm">
+              An OOO entry <span className="font-bold text-red-700">completely removes a rep from rotation</span> for the specified lane(s). 
+              The rep is temporarily excluded from receiving leads until the OOO entry is removed.
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg p-4 border border-red-100">
+            <div className="font-bold text-gray-800 mb-2">Rotation Target Options</div>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-start gap-2">
+                <span className="font-semibold text-gray-700 min-w-20">Sub 1K:</span>
+                <span className="text-gray-600">Rep excluded from Sub $1K rotation only</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-semibold text-gray-700 min-w-20">1K+:</span>
+                <span className="text-gray-600">Rep excluded from $1K+ rotation only</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-semibold text-gray-700 min-w-20">Both:</span>
+                <span className="text-gray-600">Rep excluded from both rotations (fully out of office)</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-red-100 rounded-lg p-3 border border-red-200">
+            <div className="font-mono text-sm text-gray-800">
+              <strong>Example:</strong> Rep B has OOO with target "both"<br/>
+              Result: Rep B is removed from both rotation calculations<br/>
+              Effect: Other reps continue in normal rotation order; Rep B receives no leads
+            </div>
+          </div>
+
+          <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 mt-3">
+            <div className="flex items-start gap-2">
+              <Info className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-gray-700">
+                <strong>Important:</strong> If ALL reps in a rotation are OOO, the system displays 
+                "We are closed" for that rotation. No leads can be assigned until at least one rep returns.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Key Differences */}
+      <div className="bg-blue-50 rounded-xl p-5 border border-blue-200">
+        <h3 className="text-lg font-semibold text-blue-800 mb-4">Key Differences</h3>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
+            <div className="font-bold text-yellow-700 mb-2">Skip (SKP)</div>
+            <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
+              <li>Adds +1 hit to rep's count</li>
+              <li>Rep stays in rotation</li>
+              <li>Moves rep back one cycle</li>
+              <li>Used for temporary adjustments</li>
+            </ul>
+          </div>
+          <div className="bg-white rounded-lg p-3 border border-blue-100">
+            <div className="font-bold text-red-700 mb-2">Out of Office (OOO)</div>
+            <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
+              <li>Removes rep from rotation</li>
+              <li>No hits added</li>
+              <li>Rep receives no leads</li>
+              <li>Used for absences/vacations</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
       
 
       default:

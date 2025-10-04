@@ -60,10 +60,8 @@ export function useNonLeadEntries(month?: number, year?: number) {
     
     // Subscribe to changes
     const unsubscribe = subscribeNonLeadEntries(() => {
-      if (busy.current) {
-        console.log('[useNonLeadEntries] Busy, skipping refresh');
-        return;
-      }
+      
+      
       
       // Debounce for 60ms to handle burst updates
       if (refreshTimer.current) {
