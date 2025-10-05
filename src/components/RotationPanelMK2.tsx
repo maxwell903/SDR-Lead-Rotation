@@ -603,7 +603,7 @@ useEffect(() => {
           </span>
           {item.hasOpenReplacements && (
             <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full border border-orange-300">
-              Needs Replacement
+              MFR
             </span>
           )}
         </div>
@@ -625,6 +625,10 @@ useEffect(() => {
     lane: 'sub1k' | '1kplus'
   ) => {
     const hasReplacements = expandedData.replacementQueue.length > 0;
+
+     // For collapsed view, separate items with replacements
+    const collapsedReplacements = collapsedItems.filter(item => item.hasOpenReplacements);
+    const collapsedRegular = collapsedItems.filter(item => !item.hasOpenReplacements);
     
     // Check if all reps are OOO for this lane
     const allOOO = collapsedItems.length === 0 && expandedData.currentOrder.length === 0;
@@ -639,67 +643,100 @@ useEffect(() => {
       );
     }
     
-    return (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <h4 className="font-medium text-gray-700 text-sm">{title}</h4>
-            <div className="group relative">
-              <HelpCircle className="w-3 h-3 text-gray-400 cursor-help" />
-              <div className="hidden group-hover:block absolute left-4 top-0 w-80 px-3 py-2 bg-black text-white text-xs rounded whitespace-normal z-20">
-                <div className="font-medium mb-1">How the rotation works:</div>
-                <div className="space-y-1">
-                  <div>• Reps start in their original order</div>
-                  <div>• Each hit (lead or skip) moves that rep back one full cycle</div>
-                  <div>• Reps with open replacements are bumped to the top</div>
-                  <div>• {expanded ? 'Expanded view shows the complete sequence' : 'Collapsed view shows when each rep comes up next'}</div>
-                </div>
+     return (
+    <div className="space-y-2">
+      {/* Header with expand/collapse button */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <h4 className="font-medium text-gray-700 text-sm">{title}</h4>
+          <div className="group relative">
+            <HelpCircle className="w-3 h-3 text-gray-400 cursor-help" />
+            <div className="hidden group-hover:block absolute left-4 top-0 w-80 px-3 py-2 bg-black text-white text-xs rounded whitespace-normal z-20">
+              <div className="font-medium mb-1">How the rotation works:</div>
+              <div className="space-y-1">
+                <div>• Reps start in their original order</div>
+                <div>• Each hit (lead or skip) moves that rep back one full cycle</div>
+                <div>• Reps with open replacements are bumped to the top</div>
+                <div>• {expanded ? 'Expanded view shows the complete sequence' : 'Collapsed view shows when each rep comes up next'}</div>
               </div>
             </div>
           </div>
-          <button
-            onClick={onToggleExpanded}
-            className="flex items-center space-x-1 px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
-          >
-            {expanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
-            <span>{expanded ? 'Collapse' : 'Expand'}</span>
-          </button>
         </div>
-  
-        <div className="rounded-lg border bg-white divide-y">
-          {expanded ? (
-            <>
-              
-              
-              {/* Current Order Section */}
-              <div className="p-3">
-                <div className="text-xs font-semibold text-gray-700 mb-2">
-                  CURRENT ORDER
-                </div>
-                <div className="space-y-1">
-                  {expandedData.currentOrder.map(item => renderRotationItem(item, true))}
-                </div>
-              </div>
-              
-              {/* Original Order Section */}
-              <div className="p-3 bg-gray-50">
-                <div className="text-xs font-semibold text-gray-700 mb-2">
-                  ORIGINAL ORDER
-                </div>
-                <div className="space-y-1">
-                  {expandedData.originalOrder.map(item => renderRotationItem(item, false))}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="p-3 space-y-1">
-              {collapsedItems.map(item => renderRotationItem(item, true))}
-            </div>
-          )}
-        </div>
+        <button
+          onClick={onToggleExpanded}
+          className="flex items-center space-x-1 px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+        >
+          {expanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+          <span>{expanded ? 'Collapse' : 'Expand'}</span>
+        </button>
       </div>
-    );
-  };
+
+      {/* Replacement Queue Box (separate, above main box) - for EXPANDED view */}
+      {expanded && hasReplacements && (
+        <div className="rounded-lg border bg-white">
+          <div className="p-3 bg-orange-50">
+            <div className="text-xs font-semibold text-orange-800 mb-2">
+              REPLACEMENT ORDER
+            </div>
+            <div className="space-y-1">
+              {expandedData.replacementQueue.map(item => renderRotationItem(item, false))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Replacement Queue Box (separate, above main box) - for COLLAPSED view */}
+      {!expanded && collapsedReplacements.length > 0 && (
+        <div className="rounded-lg border bg-white">
+          <div className="p-3 bg-orange-50">
+            <div className="text-xs font-semibold text-orange-800 mb-2">
+              REPLACEMENT ORDER
+            </div>
+            <div className="space-y-1">
+              {collapsedReplacements.map(item => renderRotationItem(item, true))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Rotation Box */}
+      <div className="rounded-lg border bg-white divide-y">
+        {expanded ? (
+          <>
+            {/* Current Order Section */}
+            <div className="p-3">
+              <div className="text-xs font-semibold text-gray-700 mb-2">
+                CURRENT ORDER
+              </div>
+              <div className="space-y-1">
+                {expandedData.currentOrder.map(item => renderRotationItem(item, true))}
+              </div>
+            </div>
+            
+            {/* Original Order Section */}
+            <div className="p-3 bg-gray-50">
+              <div className="text-xs font-semibold text-gray-700 mb-2">
+                ORIGINAL ORDER
+              </div>
+              <div className="space-y-1">
+                {expandedData.originalOrder.map(item => renderRotationItem(item, false))}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="p-3">
+            <div className="text-xs font-semibold text-gray-700 mb-2">
+              CURRENT ORDER
+            </div>
+            <div className="space-y-1">
+              {collapsedRegular.map(item => renderRotationItem(item, true))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
   if (loading) {
     return (
