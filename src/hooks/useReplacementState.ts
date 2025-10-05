@@ -94,14 +94,23 @@ const markLeadForReplacement = useCallback(async (lead: Lead) => {
       repId: lead.assignedTo
     });
 
+    // ✅ Extract date components from the lead
+    const leadDate = new Date(lead.date);
+    const day = leadDate.getDate();
+    const month = leadDate.getMonth() + 1;
+    const year = leadDate.getFullYear();
+
     const record = await ReplacementService.createReplacementMark({
       leadId: lead.id,
       repId: lead.assignedTo,
-      lane: lane,  // Pass the correct lane
+      lane: lane,
       accountNumber: lead.accountNumber || '',
       url: lead.url || '',
       replacedByLeadId: undefined,
       replacedAt: undefined,
+      day: day,      // ✅ ADD
+      month: month,  // ✅ ADD
+      year: year     // ✅ ADD
     });
 
     // Update local state immediately for better UX

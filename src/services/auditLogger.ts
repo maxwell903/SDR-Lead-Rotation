@@ -5,6 +5,7 @@ export type AuditActionType =
   // Lead Entry Actions
   | 'ADD_NL'
   | 'DELETE_NL'
+  | 'UPDATE_LEAD'
   | 'NL_TO_MFR'
   | 'MFR_TO_NL'
   | 'MFR_TO_LRL'
@@ -37,6 +38,10 @@ interface AuditLogParams {
   replacedRepId?: string;            // Rep whose position was taken (reorders)
   timeInput?: string;                // Time input for OOO/Skip
   lane?: 'sub1k' | '1kplus' | 'both'; // Lane for hit calculations
+
+   actionDay?: number;      // Day of the entry (1-31)
+  actionMonth?: number;    // Month of the entry (1-12)
+  actionYear?: number;     // Year of the entry
   
   // Legacy support
   oldData?: any;
@@ -68,6 +73,11 @@ export async function logAuditAction(params: AuditLogParams): Promise<void> {
       replaced_rep_id: params.replacedRepId || null,
       time_input: params.timeInput || null,
       lane: params.lane || null,
+      
+      // ✅ NEW: Populate date columns
+      action_day: params.actionDay ?? null,
+      action_month: params.actionMonth ?? null,
+      action_year: params.actionYear ?? null,
       
       // Legacy fields (optional)
       old_data: params.oldData || null,

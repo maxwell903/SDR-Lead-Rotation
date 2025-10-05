@@ -125,7 +125,7 @@ const AuditTrail: React.FC<AuditTrailProps> = () => {
   };
 
   // Render a single action row
-  const renderActionRow = (action: AuditTrailRow) => {
+const renderActionRow = (action: AuditTrailRow) => {
   return (
     <tr key={action.id} className="border-b hover:bg-gray-50 transition-colors">
       {/* Column 1: Username */}
@@ -150,7 +150,7 @@ const AuditTrail: React.FC<AuditTrailProps> = () => {
         {action.salesRepNames || '-'}
       </td>
       
-      {/* Column 5: Lane (NEW!) */}
+      {/* Column 5: Lane */}
       <td className="px-3 py-2 text-sm text-center">
         {action.lane ? (
           <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${getLaneColor(action.lane)}`}>
@@ -173,7 +173,12 @@ const AuditTrail: React.FC<AuditTrailProps> = () => {
         {action.hitValueTotalDisplay || '-'}
       </td>
       
-      {/* Column 8: Timestamp */}
+      {/* ✅ NEW Column 8: Date Assigned */}
+      <td className="px-3 py-2 text-sm text-gray-600 font-medium">
+        {action.dateAssigned || '-'}
+      </td>
+      
+      {/* Column 9: Timestamp (was Column 8) */}
       <td className="px-3 py-2 text-sm text-gray-500">
         <div className="flex items-center gap-1">
           <Clock className="w-3 h-3" />
@@ -286,12 +291,14 @@ const getLaneColor = (lane: string): string => {
                     <tr>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">User</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Action</th>
-                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Account/Time</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Acct#/Time</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Sales Rep</th>
                         <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600">Lane</th>
                         <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600">Hit Value</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Total/Impact</th>
-                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Time</th>
+                        {/* ✅ NEW COLUMN */}
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Date Assigned</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">Created</th>
                     </tr>
                     </thead>
 

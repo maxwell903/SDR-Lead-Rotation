@@ -3,6 +3,14 @@ import { supabase } from '../lib/supabase';
 import { ReplacementRecord } from '../features/leadReplacement';
 import { createHitCount } from './hitCountsService';
 
+function getDateComponents(date: Date): { day: number; month: number; year: number } {
+  return {
+    day: date.getDate(),
+    month: date.getMonth() + 1,
+    year: date.getFullYear()
+  };
+}
+
 export interface DbReplacementMark {
   id: string;
   lead_id: string;
@@ -44,7 +52,7 @@ const appToDbFormat = (appRecord: Partial<ReplacementRecord>) => ({
 
 export class ReplacementService {
   // Create new replacement mark
-  static async createReplacementMark(record: Omit<ReplacementRecord, 'markId' | 'markedAt' | 'isClosed'>): Promise<ReplacementRecord> {
+  static async createReplacementMark(record: Omit<ReplacementRecord, 'markId' | 'markedAt' | 'isClosed'> & { day: number; month: number; year: number }): Promise<ReplacementRecord> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
 
@@ -117,7 +125,10 @@ export class ReplacementService {
       accountNumber: record.accountNumber,
       hitValueTotal: totalBeforeAction,
       hitValueChange: -1,
-      lane: record.lane,  // Already normalized
+      lane: record.lane,
+      actionDay: record.day,      
+      actionMonth: record.month,  
+      actionYear: record.year     
     });
   } catch (auditError) {
     console.error('Failed to log mark for replacement:', auditError);
@@ -186,7 +197,7 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
 // Complete fixed version of deleteReplacementMark in replacementService.ts
 // This ensures audit logging ALWAYS happens for MFR → NL (unmark)
 
-static async deleteReplacementMark(markId: string): Promise<void> {
+    static async deleteReplacementMark(markId: string): Promise<void> {
       // 1) Read the mark we're about to remove
       const { data: mark, error: fetchError } = await supabase
         .from('replacement_marks')
@@ -195,6 +206,18 @@ static async deleteReplacementMark(markId: string): Promise<void> {
         .single();
       if (fetchError) throw fetchError;
       if (!mark) throw new Error('Replacement mark not found');
+
+      // ✅ 1.5) FETCH the lead to get its date
+      const { data: leadData } = await supabase
+        .from('leads')
+        .select('date')
+        .eq('id', mark.lead_id)
+        .single();
+      
+      if (!leadData) throw new Error('Lead not found for replacement mark');
+      
+      const leadDate = new Date(leadData.date);
+      const { day, month, year } = getDateComponents(leadDate);
 
       console.log('🟡 Unmarking lead (MFR → NL):', {
         markId,
@@ -211,8 +234,7 @@ static async deleteReplacementMark(markId: string): Promise<void> {
       
       // ✅ 3) Use SAME timestamp for all operations
       const operationDate = new Date();
-      const month = operationDate.getMonth() + 1;
-      const year = operationDate.getFullYear();
+      
       
       
       // 4) Delete the mark from database FIRST
@@ -262,6 +284,9 @@ static async deleteReplacementMark(markId: string): Promise<void> {
         hitValueTotal: totalBeforeAction,
         hitValueChange: 1,
         lane: normalizedLane,
+        actionDay: day,      
+        actionMonth: month,  
+        actionYear: year     
       });
       
       console.log('✅ MFR_TO_NL audit log created successfully');

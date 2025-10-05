@@ -393,7 +393,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
         rotationTarget: entryType === 'lead'
           ? ((formData.unitCount ?? 0) >= 1000 ? 'over1k' : 'sub1k')
           : 'sub1k',
-        oooTime: entryType === 'ooo' ? oooTime : undefined,
+         oooTime: (entryType === 'ooo' || entryType === 'skip') ? oooTime : undefined,
         replaceToggle,
         originalLeadIdToReplace: replaceToggle ? originalLeadIdToReplace : undefined,
         id: editingEntry?.id

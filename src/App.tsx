@@ -26,6 +26,8 @@ import { useLeads } from './hooks/useLeads';
 import EditLeadModal from './components/EditLeadModal';
 import { useNonLeadEntries } from './hooks/useNonLeadEntries';
 import AuditTrail from './components/AuditTrail';
+import NonLeadEntryModal from './components/NonLeadEntry';
+
 
 
 const generateUniqueId = (prefix: string = 'entry'): string => {
@@ -347,8 +349,10 @@ export default function App() {
 
    const { 
     entries: dbNonLeadEntries, 
+    entries: nonLeadEntries,
     addNonLeadEntry, 
     removeNonLeadEntry,
+    updateEntry,
     loading: nonLeadEntriesLoading 
   } = useNonLeadEntries(currentDate.getMonth() + 1, currentDate.getFullYear());
 
@@ -373,6 +377,8 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [activeSaveOperations, setActiveSaveOperations] = useState<Set<string>>(new Set());
   const [isDbLoading, setIsDbLoading] = useState(false);
   const [dbLoadingMessage, setDbLoadingMessage] = useState('');
+  const [editingNonLeadEntry, setEditingNonLeadEntry] = useState<any | null>(null);
+  const [showNonLeadEntryModal, setShowNonLeadEntryModal] = useState(false);
   const [selectedCell, setSelectedCell] = useState<{ 
   day: number; 
   repId: string;
@@ -685,31 +691,31 @@ const handleAddLead = async (leadData: any) => {
 
    // Handle non-lead entries (skip, ooo) - save to database
   if (leadData.type && leadData.type !== 'lead' && leadData.type !== 'next') {
-    try {
-      setIsDbLoading(true);
-      setDbLoadingMessage(`Creating ${leadData.type === 'ooo' ? 'OOO' : 'Skip'} entry...`);
+  try {
+    setIsDbLoading(true);
+    setDbLoadingMessage(`Creating ${leadData.type === 'ooo' ? 'OOO' : 'Skip'} entry...`);
 
-      await addNonLeadEntry({
-        repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
-        entryType: leadData.type === 'ooo' ? 'OOO' : 'SKP',
-        day: selectedCell?.day || new Date().getDate(),
-        month: leadMonth + 1,
-        year: leadYear,
-        time: leadData.type === 'ooo' ? leadData.oooTime : undefined,
-        rotationTarget: leadData.rotationTarget || 'both',
-      });
+    await addNonLeadEntry({
+      repId: leadData.assignedTo || selectedCell?.repId || salesReps[0].id,
+      entryType: leadData.type === 'ooo' ? 'OOO' : 'SKP',
+      day: selectedCell?.day || new Date().getDate(),
+      month: leadMonth + 1,
+      year: leadYear,
+      time: leadData.oooTime, // ✅ FIXED: Pass time for both OOO and Skip
+      rotationTarget: leadData.rotationTarget || 'both',
+    });
 
-      setShowLeadModal(false);
-      setSelectedCell(null);
-    } catch (error) {
-      console.error('Failed to create non-lead entry:', error);
-      alert('Failed to create entry. Please try again.');
-    } finally {
-      setIsDbLoading(false);
-      setDbLoadingMessage('');
-    }
-    return;
+    setShowLeadModal(false);
+    setSelectedCell(null);
+  } catch (error) {
+    console.error('Failed to create non-lead entry:', error);
+    alert('Failed to create entry. Please try again.');
+  } finally {
+    setIsDbLoading(false);
+    setDbLoadingMessage('');
   }
+  return;
+}
 
   // Handle NEXT entries in local state only (legacy behavior)
    if (leadData.type === 'next') {
@@ -965,15 +971,65 @@ if (entry?.type === 'lead' && entry.leadId) {
     }
   };
 
-  const handleEditEntry = (entry: LeadEntry) => {
+const handleEditEntry = (entry: LeadEntry) => {
+  // Check if this is a non-lead entry (OOO or Skip)
+  if (entry.type === 'ooo' || entry.type === 'skip') {
+    // Find the actual non-lead entry from the database
+    const nonLeadEntry = nonLeadEntries.find(nle => nle.id === entry.id);
+    if (nonLeadEntry) {
+      setEditingNonLeadEntry(nonLeadEntry);
+      setShowNonLeadEntryModal(true);
+    }
+    return;
+  }
+  
+  // Original behavior for lead entries
   setEditingEntry(entry);
   setSelectedCell({ 
     day: entry.day, 
     repId: entry.repId,
-    month: entry.month,  // ADDED: Get month from the entry being edited
-    year: entry.year     // ADDED: Get year from the entry being edited
+    month: entry.month,
+    year: entry.year
   });
   setShowLeadModal(true);
+};
+
+const handleDeleteNonLeadEntry = async (entryId: string) => {
+  try {
+    setIsDbLoading(true);
+    setDbLoadingMessage('Deleting entry...');
+    
+    await removeNonLeadEntry(entryId);
+    
+    setShowNonLeadEntryModal(false);
+    setEditingNonLeadEntry(null);
+  } catch (error) {
+    console.error('Failed to delete non-lead entry:', error);
+    alert('Failed to delete entry. Please try again.');
+  } finally {
+    setIsDbLoading(false);
+    setDbLoadingMessage('');
+  }
+};
+
+const handleUpdateNonLeadEntry = async (updatedData: any) => {
+  if (!editingNonLeadEntry) return;
+  
+  try {
+    setIsDbLoading(true);
+    setDbLoadingMessage(`Updating ${editingNonLeadEntry.entryType === 'OOO' ? 'OOO' : 'Skip'} entry...`);
+    
+    await updateEntry(editingNonLeadEntry.id, updatedData);
+    
+    setShowNonLeadEntryModal(false);
+    setEditingNonLeadEntry(null);
+  } catch (error) {
+    console.error('Error updating non-lead entry:', error);
+    alert('Failed to update entry. Please try again.');
+  } finally {
+    setIsDbLoading(false);
+    setDbLoadingMessage('');
+  }
 };
 
   const handleEditLead = (lead: Lead) => {
@@ -1241,26 +1297,40 @@ const handleRemoveReplacementMark = async (leadId: string) => {
       )}
 
       {showAlgorithmGuide && (
-  <RotationAlgorithmGuide 
-    isOpen={showAlgorithmGuide}
-    onClose={() => setShowAlgorithmGuide(false)}
-    salesReps={salesReps}
-    leads={currentMonthData.leads}
-    leadEntries={currentMonthData.entries}
-    replacementState={replacementState}
-    baseOrderSub1k={salesReps
-      .filter(rep => rep.status === 'active')
-      .sort((a, b) => a.sub1kOrder - b.sub1kOrder)
-      .map(rep => rep.id)
-    }
-    baseOrder1kPlus={salesReps
-      .filter(rep => rep.status === 'active' && rep.parameters.canHandle1kPlus)
-      .sort((a, b) => (a.over1kOrder || 999) - (b.over1kOrder || 999))
-      .map(rep => rep.id)
-    }
-    lrlCountsAsZero={false}
-  />
-)}
+      <RotationAlgorithmGuide 
+        isOpen={showAlgorithmGuide}
+        onClose={() => setShowAlgorithmGuide(false)}
+        salesReps={salesReps}
+        leads={currentMonthData.leads}
+        leadEntries={currentMonthData.entries}
+        replacementState={replacementState}
+        baseOrderSub1k={salesReps
+          .filter(rep => rep.status === 'active')
+          .sort((a, b) => a.sub1kOrder - b.sub1kOrder)
+          .map(rep => rep.id)
+        }
+        baseOrder1kPlus={salesReps
+          .filter(rep => rep.status === 'active' && rep.parameters.canHandle1kPlus)
+          .sort((a, b) => (a.over1kOrder || 999) - (b.over1kOrder || 999))
+          .map(rep => rep.id)
+        }
+        lrlCountsAsZero={false}
+      />
+    )}
+
+    {showNonLeadEntryModal && editingNonLeadEntry && (
+      <NonLeadEntryModal
+        entry={editingNonLeadEntry}
+        salesReps={salesReps}
+        onClose={() => {
+          setShowNonLeadEntryModal(false);
+          setEditingNonLeadEntry(null);
+        }}
+        onUpdate={handleUpdateNonLeadEntry}
+        onDelete={handleDeleteNonLeadEntry}
+      />
+    )}
+
       
     </div>
     </AuthWrapper>

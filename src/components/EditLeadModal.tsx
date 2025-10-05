@@ -199,44 +199,44 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
     });
   }, [editingLead]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Replace the handleSubmit function in EditLeadModal.tsx with this fixed version:
 
-    const oldAssignedTo = editingLead.assignedTo;
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    if (!formData.accountNumber.trim()) {
-      alert('Account number is required');
+  const oldAssignedTo = editingLead.assignedTo;
+
+  if (!formData.accountNumber.trim()) {
+    alert('Account number is required');
+    return;
+  }
+  if (!formData.assignedTo) {
+    alert('Sales rep assignment is required');
+    return;
+  }
+  if (formData.unitCount !== null && formData.unitCount < 0) {
+    alert('Unit count cannot be negative');
+    return;
+  }
+
+  // Validation: If this is a replacement lead (LRL), ensure it matches unit tier
+  if (isReplacementLead && originalLeadRecord && formData.unitCount !== null) {
+    const currentMonthKey = `${editingLead.year}-${editingLead.month}`;
+    const currentMonthLeads = monthlyData[currentMonthKey]?.leads || [];
+    const originalLead = currentMonthLeads.find(l => l.id === originalLeadRecord.leadId);
+    if (originalLead && originalLead.unitCount >= 1000 && formData.unitCount < 1000) {
+      alert('Cannot change a 1K+ replacement lead to under 1000 units');
       return;
     }
-    if (!formData.assignedTo) {
-      alert('Sales rep assignment is required');
-      return;
-    }
-        if (formData.unitCount !== null && formData.unitCount < 0) {
-      alert('Unit count cannot be negative');
-      return;
-    }
+  }
 
-    // Validation: If this is a replacement lead (LRL), ensure it matches unit tier
-    if (isReplacementLead && originalLeadRecord && formData.unitCount !== null) {
-      // Get leads from monthlyData
-      const currentMonthKey = `${editingLead.year}-${editingLead.month}`;
-      const currentMonthLeads = monthlyData[currentMonthKey]?.leads || [];
-      const originalLead = currentMonthLeads.find(l => l.id === originalLeadRecord.leadId);
-      if (originalLead && originalLead.unitCount >= 1000 && formData.unitCount < 1000) {
-        alert('Cannot change a 1K+ replacement lead to under 1000 units');
-        return;
-      }
-    }
-
-     // Validation: Block unit count changes that cross the 1000 threshold
+  // Validation: Block unit count changes that cross the 1000 threshold
   if (formData.unitCount !== null && formData.unitCount !== editingLead.unitCount) {
     const oldUnitCount = editingLead.unitCount ?? 0;
     const newUnitCount = formData.unitCount;
     const oldLane = oldUnitCount >= 1000 ? '1kplus' : 'sub1k';
     const newLane = newUnitCount >= 1000 ? '1kplus' : 'sub1k';
     
-    // Check if lane changes (crosses 1000 threshold)
     if (oldLane !== newLane) {
       const direction = newUnitCount >= 1000 ? 'to 1000+' : 'below 1000';
       alert(
@@ -248,7 +248,6 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
       return;
     }
     
-    // Additional validation: if still in sub1k lane, max is 999
     if (newLane === 'sub1k' && newUnitCount >= 1000) {
       alert(
         `Unit count cannot be 1000 or higher for sub-1k leads.\n\n` +
@@ -258,7 +257,6 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
       return;
     }
     
-    // Additional validation: if still in 1kplus lane, min is 1000
     if (newLane === '1kplus' && newUnitCount < 1000) {
       alert(
         `Unit count cannot be below 1000 for 1k+ leads.\n\n` +
@@ -268,8 +266,6 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
       return;
     }
   }
-
-  // DIFF: Add after the unit count validation block
 
   // Validation: Block sales rep changes when editing
   if (formData.assignedTo !== editingLead.assignedTo) {
@@ -285,16 +281,64 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
     return;
   }
 
-    setIsSubmitting(true);
-    try {
-      // Apply replacement mark/unmark first if toggled
-      if (markForReplacement && onMarkForReplacement) {
-        await onMarkForReplacement(editingLead.id);
-      } else if (unmarkFromReplacement && onUnmarkForReplacement) {
-        await onUnmarkForReplacement(editingLead.id);
-      }
+  // ✅ NEW: Helper function to check if actual lead data changed
+  const hasLeadDataChanged = (): boolean => {
+    // Compare account number
+    if (formData.accountNumber.trim() !== (editingLead.accountNumber ?? '')) {
+      return true;
+    }
+    
+    // Compare URL (handle null/empty cases)
+    const oldUrl = editingLead.url?.trim() || null;
+    const newUrl = formData.url?.trim() || null;
+    if (oldUrl !== newUrl) {
+      return true;
+    }
+    
+    // Compare property types (convert to sorted strings for comparison)
+    const oldTypes = [...(editingLead.propertyTypes ?? [])].sort().join(',');
+    const newTypes = [...formData.propertyTypes].sort().join(',');
+    if (oldTypes !== newTypes) {
+      return true;
+    }
+    
+    // Compare unit count
+    if (formData.unitCount !== editingLead.unitCount) {
+      return true;
+    }
+    
+    // Compare date (convert to same format for comparison)
+    const oldDate = new Date(editingLead.date);
+    const newDate = formData.date;
+    if (
+      oldDate.getFullYear() !== newDate.getFullYear() ||
+      oldDate.getMonth() !== newDate.getMonth() ||
+      oldDate.getDate() !== newDate.getDate()
+    ) {
+      return true;
+    }
+    
+    // Compare comments (convert to strings for comparison)
+    const oldComments = JSON.stringify(editingLead.comments ?? []);
+    const newComments = JSON.stringify(formData.comments);
+    if (oldComments !== newComments) {
+      return true;
+    }
+    
+    return false;
+  };
 
-      // Then update the lead itself
+  setIsSubmitting(true);
+  try {
+    // Apply replacement mark/unmark first if toggled
+    if (markForReplacement && onMarkForReplacement) {
+      await onMarkForReplacement(editingLead.id);
+    } else if (unmarkFromReplacement && onUnmarkForReplacement) {
+      await onUnmarkForReplacement(editingLead.id);
+    }
+
+    // ✅ FIXED: Only update the lead if actual data changed
+    if (hasLeadDataChanged()) {
       const updateData = {
         accountNumber: formData.accountNumber.trim(),
         url: formData.url?.trim() || null,
@@ -316,22 +360,24 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
             rep_id: formData.assignedTo,
             updated_at: new Date().toISOString()
           })
-          .eq('lead_id', editingLead.id)
+          .eq('lead_id', editingLead.id);
         
         if (markUpdateError) {
-          console.error('Failed to update replacement mark rep_id:', markUpdateError)
+          console.error('Failed to update replacement mark rep_id:', markUpdateError);
         } else {
-          console.log(`Updated replacement mark rep_id from ${oldAssignedTo} to ${formData.assignedTo}`)
+          console.log(`Updated replacement mark rep_id from ${oldAssignedTo} to ${formData.assignedTo}`);
         }
       }
-      onClose();
-    } catch (error) {
-      console.error('Error updating lead:', error);
-      alert('Failed to update lead. Please try again.');
-    } finally {
-      setIsSubmitting(false);
     }
-  };
+
+    onClose();
+  } catch (error) {
+    console.error('Error updating lead:', error);
+    alert('Failed to update lead. Please try again.');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   // Explicit action: only when user clicks "UnReplace & Add"
   const handleUnreplaceAndAdd = async () => {

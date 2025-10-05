@@ -77,92 +77,87 @@ export async function createNonLeadEntry(
 
   const created = rowToNonLeadEntry(data as DBNonLeadEntryRow);
 
-  // Create hit count records based on entry type
-  
+  // ✅ STEP 1: Get current total BEFORE creating hit counts
+  const laneValue = created.rotationTarget === 'over1k' ? '1kplus' : 
+                    created.rotationTarget === 'sub1k' ? 'sub1k' : 'both';
 
-      // Replace the SKIP logging section in nonLeadEntriesService.ts
-    // This should be after the database insert but before/during hit count creation
-
-    // After the database insert for non-lead entry...
-
-    // ✅ STEP 1: Get current total BEFORE creating hit counts
-    const laneValue = created.rotationTarget === 'over1k' ? '1kplus' : 
-                      created.rotationTarget === 'sub1k' ? 'sub1k' : 'both';
-
-    let totalBeforeAction = 0;
-    if (created.entryType === 'SKP') {
-      const lane = laneValue === 'both' ? 'sub1k' : laneValue as 'sub1k' | '1kplus';
-      
-      try {
-        const { getRepHitTotal } = await import('./auditLogger');
-        totalBeforeAction = await getRepHitTotal(
-          created.repId,
-          lane,
-          created.month,
-          created.year
-        );
-      } catch (err) {
-        console.error('Failed to get current hit total:', err);
-      }
-    }
-
-    // ✅ STEP 2: Create hit counts (keep existing logic)
+  let totalBeforeAction = 0;
+  if (created.entryType === 'SKP') {
+    const lane = laneValue === 'both' ? 'sub1k' : laneValue as 'sub1k' | '1kplus';
+    
     try {
-      const lanes = created.rotationTarget === 'over1k' ? ['1kplus'] :
-          created.rotationTarget === 'sub1k' ? ['sub1k'] :
-          ['sub1k', '1kplus'];
+      const { getRepHitTotal } = await import('./auditLogger');
+      totalBeforeAction = await getRepHitTotal(
+        created.repId,
+        lane,
+        created.month,
+        created.year
+      );
+    } catch (err) {
+      console.error('Failed to get current hit total:', err);
+    }
+  }
 
-      for (const lane of lanes) {
-        if (created.entryType === 'OOO') {
-          await createHitCount({
-            repId: created.repId,
-            hitType: 'OOO',
-            hitValue: 0,
-            lane: lane as 'sub1k' | '1kplus',
-            month: created.month,
-            year: created.year,
-          });
-        } else if (created.entryType === 'SKP') {
-          await createHitCount({
-            repId: created.repId,
-            hitType: 'SKIP',
-            hitValue: 1,
-            lane: lane as 'sub1k' | '1kplus',
-            month: created.month,
-            year: created.year,
-          });
-        }
+  // ✅ STEP 2: Create hit counts (NO AUDIT LOGGING HERE!)
+  try {
+    const lanes = created.rotationTarget === 'over1k' ? ['1kplus'] :
+        created.rotationTarget === 'sub1k' ? ['sub1k'] :
+        ['sub1k', '1kplus'];
+
+    for (const lane of lanes) {
+      if (created.entryType === 'OOO') {
+        await createHitCount({
+          repId: created.repId,
+          hitType: 'OOO',
+          hitValue: 0,
+          lane: lane as 'sub1k' | '1kplus',
+          month: created.month,
+          year: created.year,
+        });
+      } else if (created.entryType === 'SKP') {
+        await createHitCount({
+          repId: created.repId,
+          hitType: 'SKIP',
+          hitValue: 1,
+          lane: lane as 'sub1k' | '1kplus',
+          month: created.month,
+          year: created.year,
+        });
       }
-    } catch (hitError) {
-      console.error('Failed to create hit count for non-lead entry:', hitError);
     }
+  } catch (hitError) {
+    console.error('Failed to create hit count for non-lead entry:', hitError);
+  }
 
-    // ✅ STEP 3: Log audit actions
-    if (created.entryType === 'OOO') {
-      await logAuditAction({
-        actionSubtype: 'OOO',
-        tableName: 'non_lead_entries',
-        recordId: created.id,
-        affectedRepId: created.repId,
-        timeInput: created.time || '',
-        hitValueChange: 0,
-        lane: laneValue as any,
-      });
-    } else if (created.entryType === 'SKP') {
-      const lane = laneValue === 'both' ? 'sub1k' : laneValue as 'sub1k' | '1kplus';
-      
-      const { logAuditAction } = await import('./auditLogger');
-      await logAuditAction({
-        actionSubtype: 'SKIP',
-        tableName: 'non_lead_entries',
-        recordId: created.id,
-        affectedRepId: created.repId,
-        timeInput: created.time || '',
-        hitValueChange: 1,
-        hitValueTotal: totalBeforeAction,  // ✅ Pass the BEFORE value
-        lane: laneValue as any,
-      });
-    }
+  // ✅ STEP 3: Log audit actions ONCE (after hit counts are created)
+  if (created.entryType === 'OOO') {
+    await logAuditAction({
+      actionSubtype: 'OOO',
+      tableName: 'non_lead_entries',
+      recordId: created.id,
+      affectedRepId: created.repId,
+      timeInput: created.time || '',  // ✅ Time for OOO
+      hitValueChange: 0,
+      lane: laneValue as any,
+      actionDay: created.day,      // ✅ NEW
+      actionMonth: created.month,  // ✅ NEW
+      actionYear: created.year     // ✅ NEW
+    });
+  } else if (created.entryType === 'SKP') {
+    await logAuditAction({
+      actionSubtype: 'SKIP',
+      tableName: 'non_lead_entries',
+      recordId: created.id,
+      affectedRepId: created.repId,
+      timeInput: created.time || '',  // ✅ Time for Skip
+      hitValueChange: 1,
+      hitValueTotal: totalBeforeAction,
+      lane: laneValue as any,
+      actionDay: created.day,      // ✅ NEW
+      actionMonth: created.month,  // ✅ NEW
+      actionYear: created.year     // ✅ NEW
+    });
+  }
 
   return created;
 }
@@ -269,6 +264,7 @@ export async function deleteNonLeadEntry(id: string): Promise<void> {
 
   // ✅ Audit logging with BEFORE values
   const { logAuditAction } = await import('./auditLogger');
+  const actionSubtype = entry.entryType === 'OOO' ? 'DELETE_OOO' : 'DELETE_SKIP';
   
   if (entry.entryType === 'OOO') {
     await logAuditAction({
@@ -278,8 +274,11 @@ export async function deleteNonLeadEntry(id: string): Promise<void> {
       affectedRepId: entry.repId,
       timeInput: entry.time || '',
       hitValueChange: 0,  // Deleting OOO has no hit impact
-      hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
+      hitValueTotal: totalBeforeAction,  
       lane: laneValue as any,
+      actionDay: entry.day,      
+      actionMonth: entry.month,  
+      actionYear: entry.year     
     });
   } else if (entry.entryType === 'SKP') {
     await logAuditAction({
@@ -289,10 +288,169 @@ export async function deleteNonLeadEntry(id: string): Promise<void> {
       affectedRepId: entry.repId,
       timeInput: entry.time || '',
       hitValueChange: -1,  // Deleting skip removes 1 hit
-      hitValueTotal: totalBeforeAction,  // ✅ FIXED: Use BEFORE value, not after
+      hitValueTotal: totalBeforeAction,  
       lane: laneValue as any,
+      actionDay: entry.day,      
+      actionMonth: entry.month,  
+      actionYear: entry.year     
     });
   }
+}
+
+export async function updateNonLeadEntry(
+  id: string,
+  updates: Partial<Omit<NonLeadEntry, 'id' | 'repId' | 'entryType' | 'createdAt' | 'updatedAt'>>
+): Promise<NonLeadEntry> {
+  // First, get the existing entry
+  const { data: existingData, error: fetchError } = await supabase
+    .from('non_lead_entries')
+    .select()
+    .eq('id', id)
+    .single();
+
+  if (fetchError) throw fetchError;
+  if (!existingData) throw new Error('Entry not found');
+
+  const existingEntry = rowToNonLeadEntry(existingData as DBNonLeadEntryRow);
+
+  // Track what changed for audit trail
+  const dateChanged = 
+    (updates.day !== undefined && updates.day !== existingEntry.day) ||
+    (updates.month !== undefined && updates.month !== existingEntry.month) ||
+    (updates.year !== undefined && updates.year !== existingEntry.year);
+
+  const timeChanged = updates.time !== existingEntry.time;
+  const targetChanged = updates.rotationTarget !== existingEntry.rotationTarget;
+
+  // If rotation target changed, we need to handle hit counts
+  if (targetChanged && updates.rotationTarget) {
+    const oldLanes = existingEntry.rotationTarget === 'over1k' ? ['1kplus'] :
+                     existingEntry.rotationTarget === 'sub1k' ? ['sub1k'] :
+                     ['sub1k', '1kplus'];
+    
+    const newLanes = updates.rotationTarget === 'over1k' ? ['1kplus'] :
+                     updates.rotationTarget === 'sub1k' ? ['sub1k'] :
+                     ['sub1k', '1kplus'];
+
+    // Remove old hit counts
+    for (const lane of oldLanes) {
+      const reverseValue = existingEntry.entryType === 'SKP' ? -1 : 0;
+      await createHitCount({
+        repId: existingEntry.repId,
+        hitType: existingEntry.entryType === 'OOO' ? 'OOO' : 'SKIP',
+        hitValue: reverseValue,
+        lane: lane as 'sub1k' | '1kplus',
+        month: existingEntry.month,
+        year: existingEntry.year,
+      });
+    }
+
+    // Add new hit counts
+    for (const lane of newLanes) {
+      const hitValue = existingEntry.entryType === 'SKP' ? 1 : 0;
+      await createHitCount({
+        repId: existingEntry.repId,
+        hitType: existingEntry.entryType === 'OOO' ? 'OOO' : 'SKIP',
+        hitValue: hitValue,
+        lane: lane as 'sub1k' | '1kplus',
+        month: updates.month ?? existingEntry.month,
+        year: updates.year ?? existingEntry.year,
+      });
+    }
+  }
+
+  // If date changed, handle hit count movement
+  if (dateChanged && (updates.day || updates.month || updates.year)) {
+    const newMonth = updates.month ?? existingEntry.month;
+    const newYear = updates.year ?? existingEntry.year;
+    
+    // Only handle if month/year changed (moving across months)
+    if (newMonth !== existingEntry.month || newYear !== existingEntry.year) {
+      const lanes = existingEntry.rotationTarget === 'over1k' ? ['1kplus'] :
+                    existingEntry.rotationTarget === 'sub1k' ? ['sub1k'] :
+                    ['sub1k', '1kplus'];
+
+      // Remove from old month
+      for (const lane of lanes) {
+        const reverseValue = existingEntry.entryType === 'SKP' ? -1 : 0;
+        await createHitCount({
+          repId: existingEntry.repId,
+          hitType: existingEntry.entryType === 'OOO' ? 'OOO' : 'SKIP',
+          hitValue: reverseValue,
+          lane: lane as 'sub1k' | '1kplus',
+          month: existingEntry.month,
+          year: existingEntry.year,
+        });
+      }
+
+      // Add to new month
+      for (const lane of lanes) {
+        const hitValue = existingEntry.entryType === 'SKP' ? 1 : 0;
+        await createHitCount({
+          repId: existingEntry.repId,
+          hitType: existingEntry.entryType === 'OOO' ? 'OOO' : 'SKIP',
+          hitValue: hitValue,
+          lane: lane as 'sub1k' | '1kplus',
+          month: newMonth,
+          year: newYear,
+        });
+      }
+    }
+  }
+
+  // Update the entry
+  const { data, error } = await supabase
+    .from('non_lead_entries')
+    .update({
+      ...nonLeadEntryToRow({ ...existingEntry, ...updates }),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  const updated = rowToNonLeadEntry(data as DBNonLeadEntryRow);
+
+  // Log to audit trail
+  const { logAuditAction } = await import('./auditLogger');
+  const laneValue = updated.rotationTarget === 'over1k' ? '1kplus' : 
+                    updated.rotationTarget === 'sub1k' ? 'sub1k' : 'both';
+  
+  let totalBeforeAction = 0;
+  if (updated.entryType === 'SKP') {
+    const lane = laneValue === 'both' ? 'sub1k' : laneValue as 'sub1k' | '1kplus';
+    try {
+      const { getRepHitTotal } = await import('./auditLogger');
+      totalBeforeAction = await getRepHitTotal(
+        updated.repId,
+        lane,
+        updated.month,
+        updated.year
+      );
+    } catch (err) {
+      console.error('Failed to get current hit total:', err);
+    }
+  }
+
+  const actionSubtype = updated.entryType === 'OOO' ? 'UPDATE_OOO' : 'UPDATE_SKIP';
+  
+  await logAuditAction({
+    actionSubtype: actionSubtype as any,
+    tableName: 'non_lead_entries',
+    recordId: updated.id,
+    affectedRepId: updated.repId,
+    timeInput: updated.time || '',
+    hitValueChange: updated.entryType === 'SKP' ? 1 : 0,
+    hitValueTotal: totalBeforeAction,
+    lane: laneValue as any,
+    actionDay: updated.day,
+    actionMonth: updated.month,
+    actionYear: updated.year,
+  });
+
+  return updated;
 }
 
 

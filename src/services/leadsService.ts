@@ -62,6 +62,14 @@ export async function listLeads(): Promise<Lead[]> {
   return (data as DBLeadRow[] | null)?.map(rowToLead) ?? []
 }
 
+function getDateComponents(date: Date): { day: number; month: number; year: number } {
+  return {
+    day: date.getDate(),
+    month: date.getMonth() + 1,  // JavaScript months are 0-indexed
+    year: date.getFullYear()
+  };
+}
+
 /** CREATE one lead */
 export async function createLead(
   input: Omit<Lead, 'id'> & { id?: string }
@@ -81,6 +89,8 @@ export async function createLead(
   
   // Determine lane from unit count
   const lane: 'sub1k' | '1kplus' = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
+
+  const { day, month, year } = getDateComponents(created.date);
   
   // ✅ STEP 1: Get current total BEFORE creating hit count
   let totalBeforeAction = 0;
@@ -123,6 +133,9 @@ export async function createLead(
       hitValueChange: 1,
       hitValueTotal: totalBeforeAction,  // ✅ Pass the BEFORE value
       lane: lane,
+      actionDay: day,      
+      actionMonth: month,  
+      actionYear: year     
     });
   } catch (auditError) {
     console.error('Failed to log lead creation:', auditError);
@@ -160,6 +173,7 @@ export async function createLeadWithReplacement(
   console.log('✅ Lead inserted successfully:', data.id);
   
   const created = rowToLead(data as DBLeadRow)
+   const { day, month, year } = getDateComponents(created.date);
   
   // Apply the replacement relationship
   let replacementLane: 'sub1k' | '1kplus' = 'sub1k'; // Default
@@ -213,8 +227,11 @@ export async function createLeadWithReplacement(
         affectedRepId: repId,
         accountNumber: created.accountNumber,
         hitValueChange: 0,  // LRL adds 0 hits
-        hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
+        hitValueTotal: totalBeforeAction,  
         lane: replacementLane,
+        actionDay: day,      
+        actionMonth: month,  
+        actionYear: year     
       });
       console.log('✅ Audit log created');
     } catch (auditError) {
@@ -254,6 +271,18 @@ const isUnitCountChange = patch.unitCount !== undefined && patch.unitCount !== o
 const oldLane = (oldLead.unitCount ?? 0) >= 1000 ? '1kplus' : 'sub1k'
 const newLane = (patch.unitCount ?? 0) >= 1000 ? '1kplus' : 'sub1k'
 const isLaneChange = isUnitCountChange && oldLane !== newLane
+
+ // Block lane-crossing edits
+  if (isUnitCountChange && oldLane !== newLane) {
+    throw new Error('Cannot change unit count across lane threshold. Delete and recreate instead.')
+  }
+
+   // Block rep transfers
+  if (isRepTransfer) {
+    throw new Error('Cannot transfer lead to different rep. Delete and recreate instead.')
+  }
+
+
 
 // Determine lead type before the update (needed for both rep transfer AND lane change)
 let leadType: 'NL' | 'MFR' | 'LRL' = 'NL'
@@ -295,6 +324,23 @@ if (isRepTransfer || isLaneChange) {
   if (error) throw error
   
   const updated = rowToLead(data as DBLeadRow)
+
+   const { data: replacementMark } = await supabase
+    .from('replacement_marks')
+    .select('*')
+    .eq('lead_id', id)
+    .maybeSingle()
+
+    // Check if this is an LRL (replacement lead)
+  const { data: isLRL } = await supabase
+    .from('replacement_marks')
+    .select('id')
+    .eq('replaced_by_lead_id', id)
+    .maybeSingle()
+
+  const isMFR = replacementMark && !replacementMark.replaced_by_lead_id
+  const isLTR = replacementMark && replacementMark.replaced_by_lead_id
+  const isReplacementLead = !!isLRL
 
 // NEW: Handle lane change with hit compensation (unit count crossed 1000 threshold)
 // Handle lane change with hit compensation
@@ -410,16 +456,24 @@ if (isRepTransfer) {
   }
 }
 
-// Only log if there are meaningful changes (account number, etc.)
-if (patch.accountNumber && patch.accountNumber !== oldLead.accountNumber) {
+
+
+
+
+
+const { day, month, year } = getDateComponents(updated.date);
+  
   await logAuditAction({
-    actionSubtype: 'UPDATE_REP',  // Or create a new 'UPDATE_LEAD' type
+    actionSubtype: 'UPDATE_LEAD',
     tableName: 'leads',
     recordId: id,
     affectedRepId: updated.assignedTo,
     accountNumber: updated.accountNumber,
+    actionDay: day,      
+    actionMonth: month,  
+    actionYear: year     
   });
-}
+
 
 return updated
 }
@@ -636,6 +690,11 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
       } catch (err) {
         console.error('Failed to get current hit total:', err);
       }
+
+      const leadDate = old?.date ? new Date(old.date) : new Date();
+      const day = leadDate.getDate();
+      const leadMonth = leadDate.getMonth() + 1;
+      const leadYear = leadDate.getFullYear();
       
       // Create compensating hit count and log to audit
       if (isLRL) {
@@ -647,6 +706,7 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
           lane,
           month: now.getMonth() + 1,
           year: now.getFullYear(),
+          
         });
         
         // ✅ Log DELETE_LRL to audit
@@ -660,6 +720,10 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
           hitValueChange: 0,
           hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
           lane: lane,
+          actionDay: day,          // ✅ ADD
+          actionMonth: leadMonth,  // ✅ ADD
+          actionYear: leadYear     // ✅ ADD
+          
         });
         
       } else if (isMFR) {
@@ -684,6 +748,9 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
           hitValueChange: 0,
           hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
           lane: lane,
+          actionDay: day,          // ✅ ADD
+          actionMonth: leadMonth,  // ✅ ADD
+          actionYear: leadYear     // ✅ ADD
         });
         
       } else {
@@ -708,6 +775,9 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
           hitValueChange: -1,
           hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
           lane: lane,
+          actionDay: day,          // ✅ ADD
+          actionMonth: leadMonth,  // ✅ ADD
+          actionYear: leadYear     // ✅ ADD
         });
       }
     } catch (compErr) {
@@ -822,6 +892,9 @@ export async function deleteLeads(ids: string[]): Promise<void> {
       })
     }
   }
+
+  
+
 }
 
 /** Simple DELETE one lead by id (legacy - for backwards compatibility) */

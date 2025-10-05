@@ -5,6 +5,7 @@ import {
   createNonLeadEntry, 
   listNonLeadEntries, 
   deleteNonLeadEntry,
+  updateNonLeadEntry,
   subscribeNonLeadEntries 
 } from '../services/nonLeadEntriesService';
 
@@ -13,6 +14,11 @@ type State = {
   loading: boolean;
   error: string | null;
 };
+
+
+
+
+
 
 /**
  * React hook that exposes CRUD + realtime for non-lead entries (OOO & Skip).
@@ -123,7 +129,31 @@ export function useNonLeadEntries(month?: number, year?: number) {
     } finally {
       busy.current = false;
     }
+    
   };
+
+
+  const updateEntry = async (
+    id: string, 
+    updates: Partial<Omit<NonLeadEntry, 'id' | 'repId' | 'entryType' | 'createdAt' | 'updatedAt'>>
+  ) => {
+    if (busy.current) return;
+    busy.current = true;
+    
+    try {
+      const updated = await updateNonLeadEntry(id, updates);
+      // Don't update local state - let the subscription broadcast to all users
+      console.log('[useNonLeadEntries] Updated entry, waiting for subscription update:', updated.id);
+      return updated;
+    } catch (e: any) {
+      setState(s => ({ ...s, error: e?.message ?? 'Failed to update non-lead entry' }));
+      throw e;
+    } finally {
+      busy.current = false;
+    }
+  };
+
+  
 
   return {
     entries: state.entries,
@@ -131,6 +161,15 @@ export function useNonLeadEntries(month?: number, year?: number) {
     error: state.error,
     addNonLeadEntry,
     removeNonLeadEntry,
+    updateEntry,
     refresh,
   };
+
+
+
+
+
+
+  
 }
+

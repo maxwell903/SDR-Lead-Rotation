@@ -9,6 +9,7 @@ export type AuditActionType =
   | 'DELETE_NL'        // Normal Lead deleted
   | 'NL_TO_MFR'        // Normal Lead marked for replacement
   | 'MFR_TO_NL'        // Unmarked for replacement
+  | 'UPDATE_LEAD'      // Changes made to any leads in edit modal
   | 'MFR_TO_LRL'       // Replacement lead added (LRL ⇄ LTR swap)
   | 'DELETE_LRL'       // Delete replacement lead
   | 'LTR_TO_MFR'       // LTR converted back to MFR
@@ -33,6 +34,7 @@ export interface AuditTrailRow {
   lane: string;                        // Column 5: Lane (sub 1k or 1k+)
   hitValueDisplay: string;             // Column 6: Hit value or position change
   hitValueTotalDisplay: string;        // Column 7: Total or replaced rep
+  dateAssigned: string;                // ✅ NEW Column 8: Date Assigned (mm/dd/yy)
   timestamp: Date;                     // Column 8: When it happened
   rawAction: AuditActionRecord;        // Store raw data for debugging
 }
@@ -53,6 +55,9 @@ export interface AuditActionRecord {
   replaced_rep_id: string | null;
   time_input: string | null;
   lane: string | null;
+  action_day: number | null;      
+  action_month: number | null;    
+  action_year: number | null;
   created_at: string;
   // User data from join
   user_email: string | null;
@@ -99,6 +104,9 @@ export async function fetchAuditActions(options: {
       replaced_rep_id,
       time_input,
       lane,
+      action_day,
+      action_month,
+      action_year,
       created_at
     `)
     .order('created_at', { ascending: false })
@@ -257,7 +265,7 @@ export async function transformAuditAction(
                    action.user_email?.split('@')[0] || 
                    'Unknown User';
 
-  // Column 2: Action Type (human-readable)
+  // Column 2: Action Type
   const actionType = formatActionType(action.action_subtype || action.action_type);
 
   // Column 3: Account Number or Time
@@ -277,7 +285,7 @@ export async function transformAuditAction(
     salesRepNames = repName;
   }
 
-  // Column 5: Lane (NEW!)
+  // Column 5: Lane
   let lane = '';
   if (action.lane) {
     if (action.lane === 'sub1k') {
@@ -294,7 +302,6 @@ export async function transformAuditAction(
   // Column 6: Hit Value Display
   let hitValueDisplay = '';
   if (action.action_subtype?.includes('REP')) {
-    // Sales rep actions - show positions
     if (action.action_subtype === 'REORDER_REP' && 
         action.position_from !== null && 
         action.position_to !== null) {
@@ -305,7 +312,6 @@ export async function transformAuditAction(
       hitValueDisplay = `Position ${action.position_from}`;
     }
   } else {
-    // Lead/Skip actions - show hit values
     if (action.hit_value_change !== null && action.hit_value_change !== 0) {
       const sign = action.hit_value_change > 0 ? '+' : '';
       hitValueDisplay = `${sign}${action.hit_value_change}`;
@@ -315,7 +321,6 @@ export async function transformAuditAction(
   // Column 7: Hit Value Total Display
   let hitValueTotalDisplay = '';
   if (action.action_subtype?.includes('REP')) {
-    // For reorders, show the rep whose spot was taken
     if (action.action_subtype === 'REORDER_REP' && action.replaced_rep_id) {
       const replacedRepName = repNamesCache.get(action.replaced_rep_id) || 
                              await getRepName(action.replaced_rep_id);
@@ -323,11 +328,10 @@ export async function transformAuditAction(
       hitValueTotalDisplay = `Took ${replacedRepName}'s spot`;
     }
   } else {
-    // Lead/Skip actions - show equation: starting_value ± change = ending_value
     if (action.hit_value_change !== null && action.hit_value_total !== null) {
-      const startingValue = action.hit_value_total;  // Value BEFORE the action
+      const startingValue = action.hit_value_total;
       const change = action.hit_value_change;
-      const endingValue = startingValue + change;     // Value AFTER the action
+      const endingValue = startingValue + change;
       const operator = change >= 0 ? '+' : '-';
       const absChange = Math.abs(change);
       
@@ -335,7 +339,17 @@ export async function transformAuditAction(
     }
   }
 
-  // Column 8: Timestamp
+  // ✅ NEW Column 8: Date Assigned (mm/dd/yy format)
+  let dateAssigned = '';
+  if (action.action_day && action.action_month && action.action_year) {
+    // Format as mm/dd/yy
+    const month = action.action_month.toString().padStart(2, '0');
+    const day = action.action_day.toString().padStart(2, '0');
+    const year = action.action_year.toString().slice(-2); // Last 2 digits of year
+    dateAssigned = `${month}/${day}/${year}`;
+  }
+
+  // Column 9: Timestamp (was Column 8)
   const timestamp = new Date(action.created_at);
 
   return {
@@ -344,9 +358,10 @@ export async function transformAuditAction(
     actionType,
     accountNumberOrTime,
     salesRepNames,
-    lane,              // NEW!
+    lane,
     hitValueDisplay,
     hitValueTotalDisplay,
+    dateAssigned,   // ✅ NEW
     timestamp,
     rawAction: action
   };
@@ -362,6 +377,7 @@ function formatActionType(actionType: string | null): string {
     // Lead actions
     'ADD_NL': 'ADD NL',
     'DELETE_NL': 'Delete NL',
+    'UPDATE_LEAD': 'Update Lead',  // ✅ ADD THIS
     'NL_TO_MFR': 'NL → MFR',
     'MFR_TO_NL': 'MFR → NL',
     'MFR_TO_LRL': 'MFR → LRL ⇄ LTR',
