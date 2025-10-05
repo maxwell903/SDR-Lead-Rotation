@@ -178,108 +178,15 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
 }, []);
 
 
-useEffect(() => {
-    console.log('🔄 Setting up real-time subscriptions for rotation panel');
-    
-    // 1. Subscribe to rep_hit_counts changes
-    const unsubscribeHits = subscribeHitCounts(() => {
-      console.log('🔔 Hit counts changed - refreshing rotation panel');
-      loadHitCounts();
-    });
 
-    // 2. Subscribe to replacement_marks changes
-    const replacementChannel = supabase
-      .channel('replacement_marks_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'replacement_marks' 
-      }, () => {
-        console.log('🔔 Replacement marks changed - reloading');
-        loadReplacementMarks();
-      })
-      .subscribe();
-
-    // 3. 🔥 CRITICAL: Subscribe to leads table changes (triggers hit count updates)
-    const leadsChannel = supabase
-      .channel('leads_rotation_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'leads' 
-      }, () => {
-        console.log('🔔 Leads changed - reloading hit counts');
-        loadHitCounts();
-        loadReplacementMarks();
-      })
-      .subscribe();
-
-    // 4. 🔥 CRITICAL: Subscribe to non_lead_entries (SKIPs and OOOs)
-    const nonLeadEntriesChannel = supabase
-      .channel('non_lead_entries_rotation_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'non_lead_entries' 
-      }, () => {
-        console.log('🔔 Non-lead entries changed - reloading everything');
-        loadOOOStatus();
-        loadHitCounts(); // SKIPs create hit counts!
-      })
-      .subscribe();
-
-    // 5. Subscribe to sales_reps changes
-    const repsChannel = supabase
-      .channel('sales_reps_rotation_changes')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'sales_reps' 
-      }, () => {
-        console.log('🔔 Sales reps changed - reloading hit counts');
-        loadHitCounts();
-      })
-      .subscribe();
-
-    // Cleanup all subscriptions
-    return () => {
-      console.log('🧹 Cleaning up rotation panel subscriptions');
-      unsubscribeHits();
-      supabase.removeChannel(replacementChannel);
-      supabase.removeChannel(leadsChannel);
-      supabase.removeChannel(nonLeadEntriesChannel);
-      supabase.removeChannel(repsChannel);
-    };
-  }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
-  
-
-  // Initial load
-  useEffect(() => {
-    const loadAllData = async () => {
-      setLoading(true);
-      await Promise.all([
-        loadHitCounts(),
-        loadReplacementMarks(),
-        loadOOOStatus()
-      ]);
-      setLoading(false);
-    };
-    
-    loadAllData();
-  }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
-
- // Reload when salesReps changes (separate from subscriptions)
- useEffect(() => {
-   console.log('SalesReps changed - reloading replacement marks');
-   loadReplacementMarks();
- }, [salesReps, loadReplacementMarks])
-  
- // In RotationPanelMK2.tsx - Replace your subscription useEffect with this enhanced version:
+  // In RotationPanelMK2.tsx - Replace the subscription useEffect with this fixed version:
 
 useEffect(() => {
   console.log('🔄 Setting up real-time subscriptions for rotation panel');
   
-  // 1. Subscribe to rep_hit_counts changes (ALREADY WORKING!)
+  let oooUpdateTimer: NodeJS.Timeout | null = null; // Add debounce timer
+  
+  // 1. Subscribe to rep_hit_counts changes
   const unsubscribeHits = subscribeHitCounts(() => {
     console.log('🔔 Hit counts changed - refreshing rotation panel');
     loadHitCounts();
@@ -308,21 +215,32 @@ useEffect(() => {
     }, () => {
       console.log('🔔 Lead entries changed - reloading OOO AND hit counts');
       loadOOOStatus();
-      loadHitCounts(); // ✅ ADDED: Also refresh hit counts when lead entries change
+      loadHitCounts();
     })
     .subscribe();
 
-  // 4. Subscribe to non_lead_entries changes - NOW ALSO REFRESHES HIT COUNTS!
+  // 4. Subscribe to non_lead_entries changes with DEBOUNCE FIX
   const nonLeadEntriesChannel = supabase
     .channel('non_lead_entries_rotation_changes')
     .on('postgres_changes', { 
       event: '*', 
       schema: 'public', 
       table: 'non_lead_entries' 
-    }, () => {
-      console.log('🔔 Non-lead entries changed - reloading OOO AND hit counts');
-      loadOOOStatus();
-      loadHitCounts(); // ✅ ADDED: Also refresh hit counts when OOO/SKP entries change
+    }, (payload) => {
+      console.log('🔔 Non-lead entries changed:', payload.eventType, '- scheduling OOO reload');
+      
+      // Clear any pending timer
+      if (oooUpdateTimer) {
+        clearTimeout(oooUpdateTimer);
+      }
+      
+      // Debounce for 150ms to ensure DB transaction is committed
+      oooUpdateTimer = setTimeout(() => {
+        console.log('⚡ Executing debounced OOO and hit count reload');
+        loadOOOStatus();
+        loadHitCounts();
+        oooUpdateTimer = null;
+      }, 150);
     })
     .subscribe();
 
@@ -342,6 +260,12 @@ useEffect(() => {
   // Cleanup all subscriptions
   return () => {
     console.log('🧹 Cleaning up rotation panel subscriptions');
+    
+    // Clear any pending debounce timer
+    if (oooUpdateTimer) {
+      clearTimeout(oooUpdateTimer);
+    }
+    
     unsubscribeHits();
     supabase.removeChannel(replacementChannel);
     supabase.removeChannel(entriesChannel);
@@ -349,6 +273,31 @@ useEffect(() => {
     supabase.removeChannel(repsChannel);
   };
 }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
+
+  // Initial load
+  useEffect(() => {
+    const loadAllData = async () => {
+      setLoading(true);
+      await Promise.all([
+        loadHitCounts(),
+        loadReplacementMarks(),
+        loadOOOStatus()
+      ]);
+      setLoading(false);
+    };
+    
+    loadAllData();
+  }, [loadHitCounts, loadReplacementMarks, loadOOOStatus]);
+
+ // Reload when salesReps changes (separate from subscriptions)
+ useEffect(() => {
+   console.log('SalesReps changed - reloading replacement marks');
+   loadReplacementMarks();
+ }, [salesReps, loadReplacementMarks])
+  
+ // In RotationPanelMK2.tsx - Replace your subscription useEffect with this enhanced version:
+
+
 
   // Get active reps for a lane (filtering out inactive and OOO)
   const getActiveRepsForLane = useCallback((lane: 'sub1k' | '1kplus'): SalesRep[] => {

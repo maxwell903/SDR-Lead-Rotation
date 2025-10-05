@@ -51,39 +51,39 @@ export function useNonLeadEntries(month?: number, year?: number) {
     }
   }, [month, year]);
 
-  // Single subscription - set up once
   useEffect(() => {
-    console.log('[useNonLeadEntries] Setting up subscription');
+  console.log('[useNonLeadEntries] Setting up subscription');
+  
+  // Initial load
+  refresh();
+  
+  // Subscribe to changes with INCREASED DEBOUNCE for database transaction commit
+  const unsubscribe = subscribeNonLeadEntries((payload) => {
+    console.log('[useNonLeadEntries] Database change detected:', payload.eventType);
     
-    // Initial load
-    refresh();
+    // Clear any pending timer
+    if (refreshTimer.current) {
+      window.clearTimeout(refreshTimer.current);
+    }
     
-    // Subscribe to changes
-    const unsubscribe = subscribeNonLeadEntries(() => {
-      
-      
-      
-      // Debounce for 60ms to handle burst updates
-      if (refreshTimer.current) {
-        window.clearTimeout(refreshTimer.current);
-      }
-      
-      refreshTimer.current = window.setTimeout(() => {
-        console.log('[useNonLeadEntries] Refreshing from subscription');
-        refresh();
-        refreshTimer.current = null;
-      }, 60);
-    });
-    
-    // Cleanup
-    return () => {
-      console.log('[useNonLeadEntries] Cleaning up subscription');
-      if (refreshTimer.current) {
-        window.clearTimeout(refreshTimer.current);
-      }
-      unsubscribe();
-    };
-  }, [refresh]);
+    // Debounce for 150ms to ensure DB transaction is committed (increased from 60ms)
+    refreshTimer.current = window.setTimeout(() => {
+      console.log('[useNonLeadEntries] ⚡ Executing debounced refresh for calendar');
+      refresh();
+      refreshTimer.current = null;
+    }, 150);
+  });
+  
+  // Cleanup
+  return () => {
+    console.log('[useNonLeadEntries] Cleaning up subscription');
+    if (refreshTimer.current) {
+      window.clearTimeout(refreshTimer.current);
+    }
+    unsubscribe();
+  };
+}, [refresh]);
+  
 
   /**
    * Create a single non-lead entry
