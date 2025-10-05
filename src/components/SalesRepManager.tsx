@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { GripVertical, Edit2, Save, X } from 'lucide-react';
 import { SalesRep } from '../types';
+import { logSalesRepReorder } from '../services/salesRepsService';
 
 interface SalesRepManagerProps {
   salesReps: SalesRep[];
@@ -106,40 +107,51 @@ const SalesRepManager: React.FC<SalesRepManagerProps> = ({
   };
 
   const handleDrop = (e: React.DragEvent, targetRepId: string) => {
-    e.preventDefault();
-    
-    if (!draggedItem || draggedItem === targetRepId) {
-      setDraggedItem(null);
-      return;
-    }
-
-    const filteredReps = getFilteredReps();
-    const draggedIndex = filteredReps.findIndex(rep => rep.id === draggedItem);
-    const targetIndex = filteredReps.findIndex(rep => rep.id === targetRepId);
-
-    if (draggedIndex === -1 || targetIndex === -1) return;
-
-    // Create new order
-    const newOrder = [...filteredReps];
-    const [draggedRep] = newOrder.splice(draggedIndex, 1);
-    newOrder.splice(targetIndex, 0, draggedRep);
-
-    // Update the order in the reps array
-    const updatedReps = [...reps];
-    newOrder.forEach((rep, index) => {
-      const repIndex = updatedReps.findIndex(r => r.id === rep.id);
-      if (repIndex !== -1) {
-        if (rotationType === 'sub1k') {
-          updatedReps[repIndex].sub1kOrder = index + 1;
-        } else {
-          updatedReps[repIndex].over1kOrder = index + 1;
-        }
-      }
-    });
-
-    setReps(updatedReps);
+  e.preventDefault();
+  
+  if (!draggedItem || draggedItem === targetRepId) {
     setDraggedItem(null);
-  };
+    return;
+  }
+
+  const filteredReps = getFilteredReps();
+  const draggedIndex = filteredReps.findIndex(rep => rep.id === draggedItem);
+  const targetIndex = filteredReps.findIndex(rep => rep.id === targetRepId);
+
+  if (draggedIndex === -1 || targetIndex === -1) return;
+
+  // Create new order
+  const newOrder = [...filteredReps];
+  const [draggedRep] = newOrder.splice(draggedIndex, 1);
+  newOrder.splice(targetIndex, 0, draggedRep);
+
+  // Update the order in the reps array
+  const updatedReps = [...reps];
+  newOrder.forEach((rep, index) => {
+    const repIndex = updatedReps.findIndex(r => r.id === rep.id);
+    if (repIndex !== -1) {
+      if (rotationType === 'sub1k') {
+        updatedReps[repIndex].sub1kOrder = index + 1;
+      } else {
+        updatedReps[repIndex].over1kOrder = index + 1;
+      }
+    }
+  });
+
+  setReps(updatedReps);
+  
+  // Log the reorder for audit trail (use existing draggedRep and get targetRep)
+  const targetRep = filteredReps[targetIndex];
+  
+  logSalesRepReorder(
+    draggedRep.id,
+    draggedIndex + 1,
+    targetIndex + 1,
+    targetRep.id
+  ).catch(err => console.error('Failed to log reorder:', err));
+  
+  setDraggedItem(null);
+};
 
   const handleSave = () => {
     onUpdateReps(reps);

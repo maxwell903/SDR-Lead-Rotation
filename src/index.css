@@ -73,7 +73,6 @@ code {
 }
 
 .entry-item:hover {
-  transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
@@ -234,8 +233,7 @@ code {
 
 /* Improved cell hover states for zoomed view */
 .calendar-grid td:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  
   transition: all 0.15s ease;
   z-index: 10;
   position: relative;
@@ -616,7 +614,7 @@ code {
 
 /* Smooth transitions for replacement states */
 .entry-item {
-  transition: all 0.2s ease-in-out;
+  transition: background-color 0.2s ease;
 }
 
 .scale-90 {

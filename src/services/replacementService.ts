@@ -22,7 +22,7 @@ const dbToAppFormat = (dbRecord: DbReplacementMark): ReplacementRecord => ({
   markId: dbRecord.id,
   leadId: dbRecord.lead_id,
   repId: dbRecord.rep_id,
-  lane: dbRecord.lane as any, // Assuming lane enum
+  lane: dbRecord.lane as any,
   accountNumber: dbRecord.account_number || '',
   url: dbRecord.url || '',
   markedAt: new Date(dbRecord.marked_at).getTime(),
@@ -48,12 +48,12 @@ export class ReplacementService {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
 
-  console.log('Creating replacement mark with lane:', record.lane); // Debug log
+  console.log('Creating replacement mark with lane:', record.lane);
 
   const dbData = {
     lead_id: record.leadId,
     rep_id: record.repId,
-    lane: record.lane,  // IMPORTANT: Pass lane directly without transformation
+    lane: record.lane,  // This is already normalized (RotationLane type)
     marked_at: new Date().toISOString(),
     account_number: record.accountNumber,
     url: record.url,
@@ -68,29 +68,68 @@ export class ReplacementService {
 
   if (error) throw error;
   
-  // Store hit count for marked lead (MFR = -1)
+  const currentDate = new Date();
+  const month = currentDate.getMonth() + 1;
+  const year = currentDate.getFullYear();
+  
+  // ✅ record.lane is already type RotationLane ('sub1k' | '1kplus')
+  // No normalization needed - it's already correct
+  
+  // ✅ STEP 1: Get current total BEFORE creating hit count
+  let totalBeforeAction = 0;
   try {
-    const currentDate = new Date();
-    
-    console.log('Writing MFR hit with lane:', record.lane); // Debug log
+    const { getRepHitTotal } = await import('./auditLogger');
+    totalBeforeAction = await getRepHitTotal(
+      record.repId,
+      record.lane,  // Already normalized
+      month,
+      year
+    );
+  } catch (err) {
+    console.error('Failed to get current hit total:', err);
+  }
+
+  // ✅ STEP 2: Create the hit count (-1 for MFR)
+  try {
+    console.log('Creating MFR hit with lane:', record.lane);
     
     await createHitCount({
       repId: record.repId,
       hitType: 'MFR',
       hitValue: -1,
-      lane: record.lane,  // CRITICAL: Use the lane directly from record
-      month: currentDate.getMonth() + 1,
-      year: currentDate.getFullYear()
+      lane: record.lane,  // Already normalized
+      month,
+      year
     });
   } catch (hitError) {
     console.error('Failed to store hit count for marked lead:', hitError);
   }
-  
+
+  // ✅ STEP 3: Log to audit trail with BEFORE value
+  try {
+    const { logAuditAction } = await import('./auditLogger');
+    
+    await logAuditAction({
+      actionSubtype: 'NL_TO_MFR',
+      tableName: 'replacement_marks',
+      recordId: data.id,
+      affectedRepId: record.repId,
+      accountNumber: record.accountNumber,
+      hitValueTotal: totalBeforeAction,
+      hitValueChange: -1,
+      lane: record.lane,  // Already normalized
+    });
+  } catch (auditError) {
+    console.error('Failed to log mark for replacement:', auditError);
+  }
+    
   return dbToAppFormat(data);
 }
 
+  // Fix for updateReplacementMark in replacementService.ts
+// This function is called when creating an LRL, but it needs better audit support
 
-  static async updateReplacementMark(markId: string, replacedByLeadId: string): Promise<ReplacementRecord> {
+static async updateReplacementMark(markId: string, replacedByLeadId: string): Promise<ReplacementRecord> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
   
@@ -113,74 +152,123 @@ export class ReplacementService {
   if (error) throw error;
   console.log('Replacement mark updated successfully:', { markId, replacedByLeadId });
   
-  // 🚨 CRITICAL: Store hit count for replacement lead (LRL = 0)
-  // DO NOT pass leadEntryId - this is a lead-level hit, not an entry-level hit
+  // ✅ Store hit count for replacement lead (LRL = 0)
   try {
     const currentDate = new Date();
-    console.log('🔵 Creating LRL hit count with value 0');
+    console.log('Creating LRL hit count with value 0');
+    
+    const normalizedLane: 'sub1k' | '1kplus' = 
+      data.lane === '1kplus' ? '1kplus' : 'sub1k';
     
     await createHitCount({
       repId: data.rep_id,
-      // ✅ DO NOT pass leadEntryId at all
       hitType: 'LRL',
-      hitValue: 0,  // 🚨 CRITICAL: LRL must be 0, not 1
-      lane: data.lane === '1kplus' ? '1kplus' : 'sub1k',
+      hitValue: 0,
+      lane: normalizedLane,
       month: currentDate.getMonth() + 1,
       year: currentDate.getFullYear()
     });
     
-    console.log('✅ LRL hit recorded with 0 value');
+    console.log('LRL hit recorded with 0 value');
   } catch (hitError) {
     console.error('Failed to store LRL hit count:', hitError);
-    // Don't throw - the mark was already updated successfully
   }
+  
+  // NOTE: The audit logging for MFR_TO_LRL is now handled in createLeadWithReplacement
+  // where we have access to the new lead's account number and can get the BEFORE value
+  // This function just creates the hit count record
   
   return dbToAppFormat(data);
 }
   
-  static async deleteReplacementMark(markId: string): Promise<void> {
-  // 1) Read the mark we're about to remove
-  const { data: mark, error: fetchError } = await supabase
-    .from('replacement_marks')
-    .select('*')
-    .eq('id', markId)
-    .single();
-  if (fetchError) throw fetchError;
 
-  // 2) Delete the mark
-  const { error } = await supabase
-    .from('replacement_marks')
-    .delete()
-    .eq('id', markId);
-  if (error) throw error;
-    console.log('Replacement mark deleted successfully:', markId); // ADD THIS LINE
+// This ensures audit logging ALWAYS happens for MFR → NL (unmark)
+// Complete fixed version of deleteReplacementMark in replacementService.ts
+// This ensures audit logging ALWAYS happens for MFR → NL (unmark)
+
+static async deleteReplacementMark(markId: string): Promise<void> {
+      // 1) Read the mark we're about to remove
+      const { data: mark, error: fetchError } = await supabase
+        .from('replacement_marks')
+        .select('*')
+        .eq('id', markId)
+        .single();
+      if (fetchError) throw fetchError;
+      if (!mark) throw new Error('Replacement mark not found');
+
+      console.log('🟡 Unmarking lead (MFR → NL):', {
+        markId,
+        leadId: mark.lead_id,
+        repId: mark.rep_id,
+        lane: mark.lane
+      });
+
+      // ✅ 2) Normalize lane from database (handles legacy 'over1k', '1k+', etc.)
+      const normalizedLane: 'sub1k' | '1kplus' = 
+        (mark.lane === '1kplus' || mark.lane === 'over1k' || mark.lane === '1k+')
+          ? '1kplus' 
+          : 'sub1k';
+      
+      // ✅ 3) Use SAME timestamp for all operations
+      const operationDate = new Date();
+      const month = operationDate.getMonth() + 1;
+      const year = operationDate.getFullYear();
+      
+      
+      // 4) Delete the mark from database FIRST
+      const { error: deleteError } = await supabase
+        .from('replacement_marks')
+        .delete()
+        .eq('id', markId);
+      if (deleteError) throw deleteError;
+      console.log('✅ Replacement mark deleted from database');
+
+      // 5) NOW get total AFTER deletion but BEFORE creating new hit
+      let totalBeforeAction = 0;
+      try {
+        const { getRepHitTotal } = await import('./auditLogger');
+        totalBeforeAction = await getRepHitTotal(
+          mark.rep_id,
+          normalizedLane,
+          month,
+          year
+        );
+        console.log('📊 Total before creating MFR_UNMARK hit:', totalBeforeAction);
+      } catch (err) {
+        console.error('Failed to get current hit total:', err);
+      }
+
+      // 6) Create compensating hit count (MFR_UNMARK = +1)
+      // ❌ REMOVE: leadEntryId: mark.lead_id,
+      await createHitCount({
+        repId: mark.rep_id,
+        // ✅ NO leadEntryId field here!
+        hitType: 'MFR_UNMARK',
+        hitValue: 1,
+        lane: normalizedLane,
+        month,
+        year,
+      });
+      console.log('✅ MFR_UNMARK hit count created');
+
+      // 7) Log to audit trail
+      const { logAuditAction } = await import('./auditLogger');
+      await logAuditAction({
+        actionSubtype: 'MFR_TO_NL',
+        tableName: 'replacement_marks',
+        recordId: markId,
+        affectedRepId: mark.rep_id,
+        accountNumber: mark.account_number || '',
+        hitValueTotal: totalBeforeAction,
+        hitValueChange: 1,
+        lane: normalizedLane,
+      });
+      
+      console.log('✅ MFR_TO_NL audit log created successfully');
+
+    }
 
 
-  // 3) Compensating hit: Use MFR_UNMARK to return to NL status
-  try {
-    const now = new Date();
-    
-    // CRITICAL: Normalize lane - ensure it's '1kplus' not 'over1k'
-    const normalizedLane: 'sub1k' | '1kplus' = 
-      mark.lane === 'over1k' || mark.lane === '1kplus' || mark.lane === '1k+' 
-        ? '1kplus' 
-        : 'sub1k';
-    
-    console.log('Writing MFR_UNMARK hit with lane:', normalizedLane); // Debug log
-    
-    await createHitCount({
-      repId: mark.rep_id,
-      leadEntryId: mark.lead_id,
-      hitType: 'MFR_UNMARK',
-      hitValue: 1,
-      lane: normalizedLane,
-      month: now.getMonth() + 1,
-      year: now.getFullYear(),
-    });
-  } catch (hitError) {
-    console.error('Failed to write MFR_UNMARK hit:', hitError);
-  }
-}
     
   // Undo replacement (clear replaced_by_lead_id)
   static async undoReplacement(markId: string): Promise<ReplacementRecord> {
@@ -221,7 +309,7 @@ export class ReplacementService {
       .eq('lead_id', leadId)
       .single();
 
-    if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "not found"
+    if (error && error.code !== 'PGRST116') throw error;
     
     if (data) {
       console.log('Found replacement mark for lead:', leadId, data);

@@ -25,6 +25,7 @@ import AuthWrapper from './components/AuthWrapper';
 import { useLeads } from './hooks/useLeads';
 import EditLeadModal from './components/EditLeadModal';
 import { useNonLeadEntries } from './hooks/useNonLeadEntries';
+import AuditTrail from './components/AuditTrail';
 
 
 const generateUniqueId = (prefix: string = 'entry'): string => {
@@ -1060,35 +1061,7 @@ const handleDeleteLead = async (leadId: string) => {
   // UPDATED: Enhanced handleRemoveReplacementMark with immediate UI refresh
   // Put near your other handlers in App.tsx
 const handleRemoveReplacementMark = async (leadId: string) => {
-  const rec = replacementState.byLeadId?.[leadId];
-  const lead = currentMonthData.leads.find(l => l.id === leadId);
-
-  const repId = rec?.repId ?? lead?.assignedTo;
-  
-  // CRITICAL: Determine lane from lead's unit count directly
-  const leadUnitCount = lead?.unitCount ?? 0;
-  const lane: 'sub1k' | '1kplus' = leadUnitCount >= 1000 ? '1kplus' : 'sub1k';
-  
-  console.log('Unmarking lead:', {
-    leadId,
-    unitCount: leadUnitCount,
-    lane: lane,  // Debug: should show '1kplus' for 1k+ leads
-    repId
-  });
-
-  // Only record a hit if we have enough context
-  if (repId && lane) {
-    await createHitCount({
-      repId,
-      hitType: 'MFR_UNMARK',  // CHANGED: Use MFR_UNMARK for clarity
-      hitValue: 1,            // UNMARK adds the point back
-      lane,
-      month: currentDate.getMonth() + 1,
-      year: currentDate.getFullYear(),
-    });
-  }
-
-  await dbRemoveLeadMark(leadId);
+    await dbRemoveLeadMark(leadId);
 };
   
 
@@ -1185,7 +1158,13 @@ const handleRemoveReplacementMark = async (leadId: string) => {
                 onRemoveReplacementMark={handleRemoveReplacementMark}
                 onEditLead={handleEditLead}  
                 viewingMonth={currentDate.getMonth()}
-                viewingYear={currentDate.getFullYear()}          />
+                viewingYear={currentDate.getFullYear()}          
+                />
+                <AuditTrail 
+              salesReps={salesReps}
+              currentMonth={currentDate.getMonth() + 1}
+              currentYear={currentDate.getFullYear()}
+            />
           </div>
           
           <div className="space-y-6">

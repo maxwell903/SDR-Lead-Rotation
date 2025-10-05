@@ -84,12 +84,7 @@ export async function createHitCount(input: {
   
   const created = rowToHitCount(data as DBHitCountRow)
   
-  await logAction({
-    actionType: 'CREATE',
-    tableName: 'rep_hit_counts' as any,
-    recordId: created.id,
-    newData: created
-  })
+  
   
   return created
 }

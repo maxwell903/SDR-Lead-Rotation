@@ -4,6 +4,7 @@ import { ReplacementService } from './replacementService'
 import { createHitCount } from './hitCountsService'
 import type { Lead, LeadEntry } from '../types'
 import { ReplacementState } from '../features/leadReplacement'
+import { logAuditAction, getRepHitTotal } from './auditLogger';
 
 // DB row shape (snake_case from your schema)
 type DBLeadRow = {
@@ -78,9 +79,25 @@ export async function createLead(
   
   const created = rowToLead(data as DBLeadRow)
   
-  // Store hit count for normal lead (NL = +1)
+  // Determine lane from unit count
+  const lane: 'sub1k' | '1kplus' = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
+  
+  // ✅ STEP 1: Get current total BEFORE creating hit count
+  let totalBeforeAction = 0;
   try {
-    const lane = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
+    const { getRepHitTotal } = await import('./auditLogger');
+    totalBeforeAction = await getRepHitTotal(
+      created.assignedTo,
+      lane,
+      created.month,
+      created.year
+    );
+  } catch (err) {
+    console.error('Failed to get current hit total:', err);
+  }
+  
+  // ✅ STEP 2: Store hit count for normal lead (NL = +1)
+  try {
     await createHitCount({
       repId: created.assignedTo,
       hitType: 'NL',
@@ -91,20 +108,34 @@ export async function createLead(
     });
   } catch (hitError) {
     console.error('Failed to store hit count for new lead:', hitError);
-    // Don't fail the lead creation if hit count storage fails
   }
   
-  await logAction({
-    actionType: 'CREATE',
-    tableName: 'leads',
-    recordId: created.id,
-    newData: created
-  })
+  // ✅ STEP 3: Log to audit trail with BEFORE value
+  try {
+    const { logAuditAction } = await import('./auditLogger');
+
+    await logAuditAction({
+      actionSubtype: 'ADD_NL',
+      tableName: 'leads',
+      recordId: created.id,
+      affectedRepId: created.assignedTo,
+      accountNumber: created.accountNumber,
+      hitValueChange: 1,
+      hitValueTotal: totalBeforeAction,  // ✅ Pass the BEFORE value
+      lane: lane,
+    });
+  } catch (auditError) {
+    console.error('Failed to log lead creation:', auditError);
+  }
   
   return created
 }
 
 /** CREATE LRL lead with replacement relationship */
+/** CREATE LRL lead with replacement relationship */
+// Fix for createLeadWithReplacement in leadsService.ts
+// This logs the MFR → LRL transition
+
 export async function createLeadWithReplacement(
   input: Omit<Lead, 'id'> & { id?: string },
   originalLeadIdToReplace: string
@@ -117,8 +148,7 @@ export async function createLeadWithReplacement(
     originalLeadId: originalLeadIdToReplace
   });
   
-  // 🚨 CRITICAL: Insert lead WITHOUT creating a hit count
-  // Do NOT call createLead() - insert directly to avoid NL +1
+  // Insert lead WITHOUT creating a hit count
   console.log('🔵 Step 1: Inserting lead into database (NO HIT COUNT)');
   const { data, error } = await supabase
     .from('leads')
@@ -132,41 +162,72 @@ export async function createLeadWithReplacement(
   const created = rowToLead(data as DBLeadRow)
   
   // Apply the replacement relationship
+  let replacementLane: 'sub1k' | '1kplus' = 'sub1k'; // Default
+  let repId: string = '';
+  
   try {
     console.log('🔵 Step 2: Finding replacement mark');
-    // Find the replacement mark for the original lead
     const { data: markData, error: markError } = await supabase
       .from('replacement_marks')
-      .select('id, lane')
+      .select('id, lane, rep_id, account_number')
       .eq('lead_id', originalLeadIdToReplace)
       .single()
     
     if (markError) throw markError
     if (!markData) throw new Error('Original lead not marked for replacement')
     
+    // Store the lane and rep for audit logging
+    replacementLane = markData.lane as 'sub1k' | '1kplus';
+    repId = markData.rep_id;
+    
     console.log('✅ Found replacement mark:', markData.id, 'lane:', markData.lane);
+    
+    // ✅ STEP 2.5: Get total BEFORE updating the mark (which creates LRL hit)
+    let totalBeforeAction = 0;
+    try {
+      const { getRepHitTotal } = await import('./auditLogger');
+      totalBeforeAction = await getRepHitTotal(
+        repId,
+        replacementLane,
+        created.month,
+        created.year
+      );
+      console.log('📊 Total before LRL:', totalBeforeAction);
+    } catch (err) {
+      console.error('Failed to get current hit total:', err);
+    }
+    
     console.log('🔵 Step 3: Updating replacement mark (THIS WILL CREATE LRL 0)');
-    
-    // Update the replacement mark with the new lead ID
-    // This will create the LRL 0 hit count inside updateReplacementMark
     await ReplacementService.updateReplacementMark(markData.id, created.id)
-    
     console.log('✅ LRL 0 hit count created');
+    
+    // ✅ Log to audit trail with BEFORE value
+    console.log('🔵 Step 4: Logging to audit trail');
+    try {
+      const { logAuditAction } = await import('./auditLogger');
+      
+      await logAuditAction({
+        actionSubtype: 'MFR_TO_LRL',
+        tableName: 'leads',
+        recordId: created.id,
+        affectedRepId: repId,
+        accountNumber: created.accountNumber,
+        hitValueChange: 0,  // LRL adds 0 hits
+        hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
+        lane: replacementLane,
+      });
+      console.log('✅ Audit log created');
+    } catch (auditError) {
+      console.error('Failed to log replacement to audit:', auditError);
+    }
+    
     console.log('✅ END: createLeadWithReplacement complete');
     
   } catch (replacementError) {
     console.error('❌ Error applying replacement:', replacementError)
-    // Rollback the lead creation if replacement fails
     await supabase.from('leads').delete().eq('id', created.id)
     throw new Error('Failed to create replacement relationship')
   }
-  
-  await logAction({
-    actionType: 'CREATE',
-    tableName: 'leads',
-    recordId: created.id,
-    newData: created
-  })
   
   return created
 }
@@ -349,13 +410,16 @@ if (isRepTransfer) {
   }
 }
 
-await logAction({
-  actionType: 'UPDATE',
-  tableName: 'leads',
-  recordId: id,
-  oldData: oldData ? rowToLead(oldData as DBLeadRow) : null,
-  newData: updated
-})
+// Only log if there are meaningful changes (account number, etc.)
+if (patch.accountNumber && patch.accountNumber !== oldLead.accountNumber) {
+  await logAuditAction({
+    actionSubtype: 'UPDATE_REP',  // Or create a new 'UPDATE_LEAD' type
+    tableName: 'leads',
+    recordId: id,
+    affectedRepId: updated.assignedTo,
+    accountNumber: updated.accountNumber,
+  });
+}
 
 return updated
 }
@@ -486,152 +550,175 @@ export async function upsertLeads(leads: Lead[]): Promise<Lead[]> {
   return upserted
 }
 
-/** ENHANCED DELETE with replacement cascade handling */
+// Complete replacement for deleteLeadWithReplacementHandling in leadsService.ts
+// Replace the entire function starting around line 540
+
 export async function deleteLeadWithReplacementHandling(leadId: string): Promise<void> {
+  console.log(`Starting deletion process for lead: ${leadId}`);
+  
   try {
-    console.log(`Starting enhanced delete for lead: ${leadId}`)
-    
-    // Step 1: Check if this lead IS a replacement for another lead (LRL)
-    const { data: isReplacementData, error: isReplacementError } = await supabase
+    // ✅ Step 1: Check replacement status BEFORE deletion
+    const { data: isReplacementData } = await supabase
       .from('replacement_marks')
       .select('*')
       .eq('replaced_by_lead_id', leadId)
-      .maybeSingle()
+      .maybeSingle();
     
-    if (isReplacementError) throw isReplacementError
-    
-    // If this lead is an LRL replacement, undo the replacement mark
-    if (isReplacementData) {
-      console.log(`Lead ${leadId} is an LRL replacement, undoing replacement mark`)
-      
-      // Undo the replacement (clears replaced_by_lead_id)
-      const { error: undoError } = await supabase
-        .from('replacement_marks')
-        .update({ 
-          replaced_by_lead_id: null,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', isReplacementData.id)
-      
-      if (undoError) throw undoError
-      console.log(`Replacement mark ${isReplacementData.id} has been reopened (MFR status restored)`)
-    }
-    
-    // Step 2: Check if this lead has a replacement
-    const { data: hasReplacementData, error: hasReplacementError } = await supabase
+    const { data: hasReplacementData } = await supabase
       .from('replacement_marks')
       .select('*')
       .eq('lead_id', leadId)
-      .maybeSingle()
+      .maybeSingle();
     
-    // ... rest of the function continues as before
-    
-    if (hasReplacementError) throw hasReplacementError
-    
-    if (hasReplacementData && hasReplacementData.replaced_by_lead_id) {
-      console.log(`Lead ${leadId} has replacement ${hasReplacementData.replaced_by_lead_id}, deleting replacement first`)
-      // This lead has a replacement - delete replacement first (recursive call)
-      await deleteLeadWithReplacementHandling(hasReplacementData.replaced_by_lead_id)
+    // Step 2: Handle cascading deletions for replacement relationships
+    if (isReplacementData) {
+      // This lead is an LRL, need to unmark the original
+      console.log(`Lead ${leadId} is an LRL, unmarking original lead ${isReplacementData.lead_id}`);
+      await ReplacementService.undoReplacement(isReplacementData.id);
     }
     
-    // Step 3: Remove any replacement marks for this lead
-    if (hasReplacementData) {
-      console.log(`Removing replacement mark for lead: ${leadId}`)
-      await ReplacementService.deleteReplacementMark(hasReplacementData.id)
+    if (hasReplacementData?.replaced_by_lead_id) {
+      // This lead has been replaced (RLBR), also delete the replacement
+      console.log(`Lead ${leadId} has replacement ${hasReplacementData.replaced_by_lead_id}, deleting it first`);
+      await deleteLeadWithReplacementHandling(hasReplacementData.replaced_by_lead_id);
     }
     
-    // Step 4: Get old data for logging before deletion
+    if (hasReplacementData && !hasReplacementData.replaced_by_lead_id) {
+      // This lead is marked but not replaced (MFR), remove the mark
+      console.log(`Lead ${leadId} is marked for replacement, removing mark`);
+      await ReplacementService.deleteReplacementMark(hasReplacementData.id);
+    }
+    
+    // Step 3: Get old data BEFORE deletion for audit logging
     const { data: oldData } = await supabase
       .from('leads')
       .select('*')
       .eq('id', leadId)
-      .single()
+      .single();
     
-    // Step 5: Finally delete the lead itself
-    console.log(`Deleting lead from database: ${leadId}`)
+    if (!oldData) {
+      console.log(`Lead ${leadId} not found, may have been deleted in cascade`);
+      return;
+    }
+    
+    // Step 4: Delete the lead itself
+    console.log(`Deleting lead from database: ${leadId}`);
     const { error: deleteError } = await supabase
       .from('leads')
       .delete()
-      .eq('id', leadId)
+      .eq('id', leadId);
     
-    if (deleteError) throw deleteError
+    if (deleteError) throw deleteError;
 
-
-   // Step 5.1: Compensating hit to reverse this lead's counted contribution
-    // - If this lead is an LRL replacement => write LRL = -1
-    // - If this lead is a marked MFR => no compensation (already at 0)
-    // - Else normal lead => write NL = -1
+    // Step 5: Create compensating hit and log to audit
     try {
-      // We fetched these above; both variables are in this function’s scope:
-      //   const { data: isReplacementData } = supabase.from('replacement_marks').eq('replaced_by_lead_id', leadId).maybeSingle()
-      //   const { data: hasReplacementData } = supabase.from('replacement_marks').eq('lead_id', leadId).maybeSingle()
-      //
-      // We also fetched oldData above for logging; use it for lane/rep:
-      //   const { data: oldData } = supabase.from('leads').select('*').eq('id', leadId).single()
       const now = new Date();
-      const old = oldData as any; // DB row
+      const old = oldData as any;
       const repId = (old?.assigned_to ?? '') as string;
       const units = (old?.unit_count ?? 0) as number;
       const lane: 'sub1k' | '1kplus' = units >= 1000 ? '1kplus' : 'sub1k';
+      const accountNumber = old?.account_number ?? '';
 
-      // Determine the lead type and apply appropriate compensating hit
+      // Determine the lead type from the data we fetched earlier
       const isMFR = hasReplacementData && !hasReplacementData.replaced_by_lead_id;
       const isLRL = isReplacementData;
       
-      // Around line where you handle deletion hits
-if (isLRL) {
-  console.log('Deleting LRL lead - recording LRL 0 (no rotation impact)');
-  await createHitCount({
-    repId,
-    // ❌ REMOVED: leadEntryId: leadId,
-    hitType: 'LRL',
-    hitValue: 0,
-    lane,
-    month: now.getMonth() + 1,
-    year: now.getFullYear(),
-  });
-} else if (isMFR) {
-  console.log('Deleting MFR lead - recording MFR 0 for audit');
-  await createHitCount({
-    repId,
-    // ❌ REMOVED: leadEntryId: leadId,
-    hitType: 'MFR',
-    hitValue: 0,
-    lane,
-    month: now.getMonth() + 1,
-    year: now.getFullYear(),
-  });
-} else {
-  console.log('Deleting NL lead - compensating with NL -1');
-  await createHitCount({
-    repId,
-    // ❌ REMOVED: leadEntryId: leadId,
-    hitType: 'NL',
-    hitValue: -1,
-    lane,
-    month: now.getMonth() + 1,
-    year:  now.getFullYear(),
-  });
-}
+      // ✅ Get total BEFORE creating compensating hit
+      let totalBeforeAction = 0;
+      try {
+        const { getRepHitTotal } = await import('./auditLogger');
+        totalBeforeAction = await getRepHitTotal(
+          repId,
+          lane,
+          now.getMonth() + 1,
+          now.getFullYear()
+        );
+      } catch (err) {
+        console.error('Failed to get current hit total:', err);
+      }
+      
+      // Create compensating hit count and log to audit
+      if (isLRL) {
+        console.log('Deleting LRL lead - recording LRL 0 (no rotation impact)');
+        await createHitCount({
+          repId,
+          hitType: 'LRL',
+          hitValue: 0,
+          lane,
+          month: now.getMonth() + 1,
+          year: now.getFullYear(),
+        });
+        
+        // ✅ Log DELETE_LRL to audit
+        const { logAuditAction } = await import('./auditLogger');
+        await logAuditAction({
+          actionSubtype: 'DELETE_LRL',
+          tableName: 'leads',
+          recordId: leadId,
+          affectedRepId: repId,
+          accountNumber: accountNumber,
+          hitValueChange: 0,
+          hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
+          lane: lane,
+        });
+        
+      } else if (isMFR) {
+        console.log('Deleting MFR lead - recording MFR 0 for audit');
+        await createHitCount({
+          repId,
+          hitType: 'MFR',
+          hitValue: 0,
+          lane,
+          month: now.getMonth() + 1,
+          year: now.getFullYear(),
+        });
+        
+        // ✅ Log DELETE_MFR to audit
+        const { logAuditAction } = await import('./auditLogger');
+        await logAuditAction({
+          actionSubtype: 'DELETE_MFR',
+          tableName: 'leads',
+          recordId: leadId,
+          affectedRepId: repId,
+          accountNumber: accountNumber,
+          hitValueChange: 0,
+          hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
+          lane: lane,
+        });
+        
+      } else {
+        console.log('Deleting NL lead - compensating with NL -1');
+        await createHitCount({
+          repId,
+          hitType: 'NL',
+          hitValue: -1,
+          lane,
+          month: now.getMonth() + 1,
+          year: now.getFullYear(),
+        });
+        
+        // ✅ Log DELETE_NL to audit
+        const { logAuditAction } = await import('./auditLogger');
+        await logAuditAction({
+          actionSubtype: 'DELETE_NL',
+          tableName: 'leads',
+          recordId: leadId,
+          affectedRepId: repId,
+          accountNumber: accountNumber,
+          hitValueChange: -1,
+          hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
+          lane: lane,
+        });
+      }
     } catch (compErr) {
       console.error('Failed to write compensating hit on lead delete:', compErr);
     }
     
-    // Step 6: Log the deletion
-    if (oldData) {
-      await logAction({
-        actionType: 'DELETE',
-        tableName: 'leads',
-        recordId: leadId,
-        oldData: rowToLead(oldData as DBLeadRow)
-      })
-    }
-    
-    console.log(`Successfully deleted lead with replacement handling: ${leadId}`)
+    console.log(`Successfully deleted lead with replacement handling: ${leadId}`);
     
   } catch (error) {
-    console.error(`Error in enhanced lead deletion for ${leadId}:`, error)
-    throw error
+    console.error(`Error in enhanced lead deletion for ${leadId}:`, error);
+    throw error;
   }
 }
 

@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase'
 import type { SalesRep } from '../types'
+import { logAuditAction } from './auditLogger'
 
 // Allowed property types in your app's strict union
 const ALLOWED_PROPERTY_TYPES = ['MFH', 'MF', 'SFH', 'Commercial'] as const
@@ -88,6 +89,15 @@ export async function createSalesRep(
     .select()
     .single()
   if (error) throw error
+
+  await logAuditAction({
+  actionSubtype: 'CREATE_REP',
+  tableName: 'sales_reps',
+  recordId: data.id,
+  affectedRepId: data.id,
+  positionTo: data.sub1k_order,
+});
+
   return rowToRep(data as DBSalesRepRow)
 }
 
@@ -109,11 +119,51 @@ export async function updateSalesRep(id: string, patch: Partial<SalesRep>): Prom
 }
 
 /** DELETE many reps by ids */
+
 export async function deleteSalesReps(ids: string[]): Promise<void> {
   if (!ids.length) return
+  
+  // First, get the reps to log their positions
+  const { data: repsToDelete } = await supabase
+    .from('sales_reps')
+    .select('*')
+    .in('id', ids);
+  
+  // Delete them
   const { error } = await supabase.from('sales_reps').delete().in('id', ids)
   if (error) throw error
+  
+  // Log each deletion
+  if (repsToDelete) {
+    for (const rep of repsToDelete) {
+      await logAuditAction({
+        actionSubtype: 'DELETE_REP',
+        tableName: 'sales_reps',
+        recordId: rep.id,
+        affectedRepId: rep.id,
+        positionFrom: rep.sub1k_order,
+      });
+    }
+  }
 }
+
+export async function logSalesRepReorder(
+  repId: string,
+  fromPosition: number,
+  toPosition: number,
+  replacedRepId: string | null
+): Promise<void> {
+  await logAuditAction({
+    actionSubtype: 'REORDER_REP',
+    tableName: 'sales_reps',
+    recordId: repId,
+    affectedRepId: repId,
+    positionFrom: fromPosition,
+    positionTo: toPosition,
+    replacedRepId: replacedRepId || undefined,
+  });
+}
+
 
 
 /** Realtime subscription */

@@ -48,12 +48,12 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
 
 }) => {
   // State management
-  const [zoomLevel, setZoomLevel] = useState(50); // max percent
+  const [zoomLevel, setZoomLevel] = useState(55); // max percent
   const [rowHeight, setRowHeight] = useState(60);
   const [columnWidth, setColumnWidth] = useState(140);
   const [showDayOfMonth, setShowDayOfMonth] = useState(true);
   const [showDayOfWeek, setShowDayOfWeek] = useState(false);
-  const [hideWeekends, setHideWeekends] = useState(true);
+  const [hideWeekends, setHideWeekends] = useState(false);
   
   // New restriction toggle states
   const [showRestrictions, setShowRestrictions] = useState(true);
@@ -66,7 +66,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   // Zoom controls
   const zoomIn = () => setZoomLevel(prev => Math.min(prev + 10, 150));
   const zoomOut = () => setZoomLevel(prev => Math.max(prev - 10, 50));
-  const resetZoom = () => setZoomLevel(100);
+  const resetZoom = () => setZoomLevel(55);
 
   // Sort reps by their order for display
   const sub1kReps = salesReps
