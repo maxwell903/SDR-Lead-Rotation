@@ -28,9 +28,36 @@ interface CalendarViewOptionsProps {
   showCantDo: boolean;
   onShowCantDoChange: (value: boolean) => void;
 
+    hideWeekends: boolean;
+  onHideWeekendsChange: (hide: boolean) => void;
+  
+
     viewingMonth: number;  // 0-indexed (0 = Jan, 11 = Dec)
   viewingYear: number;
+
+  
 }
+
+
+export const filterWeekendDays = (
+  daysInMonth: number,
+  hideWeekends: boolean,
+  viewingMonth: number,
+  viewingYear: number
+): number[] => {
+  const allDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  
+  if (!hideWeekends) {
+    return allDays;
+  }
+  
+  // Filter out weekends (Saturday = 6, Sunday = 0)
+  return allDays.filter(day => {
+    const date = new Date(viewingYear, viewingMonth, day);
+    const dayOfWeek = date.getDay();
+    return dayOfWeek !== 0 && dayOfWeek !== 6;
+  });
+};
 
 const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
   zoomLevel,
@@ -51,6 +78,8 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
   onShowCanDoChange,
   showCantDo,
   onShowCantDoChange,
+  hideWeekends,
+  onHideWeekendsChange,
    viewingMonth,
   viewingYear,
 
@@ -183,6 +212,16 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
                   />
                   <span className="text-sm text-gray-600">Show Day of Week</span>
                 </label>
+                <label className="flex items-center space-x-2">
+                <input
+                    type="checkbox"
+                    checked={hideWeekends}
+                    onChange={(e) => onHideWeekendsChange(e.target.checked)}
+                    className="w-4 h-4 text-purple-600 bg-gray-100 border-gray-300 rounded focus:ring-purple-500"
+                />
+                <span className="text-sm text-gray-600">Hide Weekends</span>
+                </label>
+
               </div>
             </div>
 
@@ -224,33 +263,75 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
               </div>
             </div>
           </div>
+                {/* Updated Legend Section */}
+<div className="mt-6 pt-6 border-t border-gray-200">
+  <label className="text-sm font-semibold text-gray-700 mb-3 block">Calendar Legend</label>
+  
+  {/* Entry Types */}
+  <div className="mb-4">
+    <p className="text-xs font-medium text-gray-500 mb-2">Entry Types</p>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-blue-100 border border-blue-200 rounded"></div>
+        <span className="text-gray-700">Lead Assignment</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-yellow-100 border border-yellow-200 rounded"></div>
+        <span className="text-gray-700">Skip Day</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-red-100 border border-red-200 rounded"></div>
+        <span className="text-gray-700">Out of Office</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-green-100 border border-green-200 rounded"></div>
+        <span className="text-gray-700">Next in Rotation</span>
+      </div>
+    </div>
+  </div>
 
-          {/* Legend Section */}
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <label className="text-sm font-semibold text-gray-700 mb-3 block">Legend</label>
-            <div className="grid grid-cols-5 gap-4 text-xs">
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-blue-100 border border-blue-200 rounded"></div>
-                <span className="text-gray-700">Lead</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-yellow-100 border border-yellow-200 rounded"></div>
-                <span className="text-gray-700">Skip</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-red-100 border border-red-200 rounded"></div>
-                <span className="text-gray-700">OOO</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 bg-green-100 border border-green-200 rounded"></div>
-                <span className="text-gray-700">Next</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <ExternalLink className="w-4 h-4 text-blue-600" />
-                <span className="text-gray-700">Clickable Link</span>
-              </div>
-            </div>
-          </div>
+  {/* Replacement States */}
+  <div className="mb-4">
+    <p className="text-xs font-medium text-gray-500 mb-2">Lead Replacement</p>
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-orange-100 border border-orange-300 rounded"></div>
+        <span className="text-gray-700">Needs Replacement</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-emerald-100 border border-emerald-300 rounded ring-1 ring-emerald-200"></div>
+        <span className="text-gray-700">Replacement Lead</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-gray-100 border border-gray-300 rounded opacity-75"></div>
+        <span className="text-gray-700">Replaced (Closed)</span>
+      </div>
+    </div>
+  </div>
+
+  {/* Highlights & Indicators */}
+  <div>
+    <p className="text-xs font-medium text-gray-500 mb-2">Highlights & Indicators</p>
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-yellow-200 border-l-4 border-yellow-500 rounded"></div>
+        <span className="text-gray-700">Current Day</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <ExternalLink className="w-4 h-4 text-blue-600" />
+        <span className="text-gray-700">Clickable Link</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-blue-50 border border-blue-200 rounded"></div>
+        <span className="text-gray-700">Sub-1K Column</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-green-50 border border-green-200 rounded"></div>
+        <span className="text-gray-700">1K+ Column</span>
+      </div>
+    </div>
+  </div>
+</div>
         </div>
       )}
     </div>

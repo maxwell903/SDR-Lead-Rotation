@@ -7,7 +7,8 @@ import {
   getReplacementPartnerLeadId,
   ReplacementPill,
 } from '../features/leadReplacement.tsx';
-import CalendarViewOptions from './CalendarViewOptions';
+
+import CalendarViewOptions, { filterWeekendDays } from './CalendarViewOptions';
 
 interface CalendarGridProps {
   salesReps: SalesRep[];
@@ -52,6 +53,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   const [columnWidth, setColumnWidth] = useState(140);
   const [showDayOfMonth, setShowDayOfMonth] = useState(true);
   const [showDayOfWeek, setShowDayOfWeek] = useState(false);
+  const [hideWeekends, setHideWeekends] = useState(true);
   
   // New restriction toggle states
   const [showRestrictions, setShowRestrictions] = useState(true);
@@ -225,6 +227,20 @@ const formatDayHeader = (day: number) => {
       '--header-padding': `${headerPadding}px`,
     } as React.CSSProperties;
   }, [zoomLevel, rowHeight, columnWidth]);
+
+  // Define visibleDays based on hideWeekends and daysInMonth
+  const visibleDays = useMemo(() => {
+    const days: number[] = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (hideWeekends) {
+        const date = new Date(viewingYear, viewingMonth, d);
+        const dayOfWeek = date.getDay();
+        if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip Sunday (0) and Saturday (6)
+      }
+      days.push(d);
+    }
+    return days;
+  }, [daysInMonth, hideWeekends, viewingMonth, viewingYear]);
 
   // UPDATED: Modified to consider rotation context
   
@@ -475,6 +491,8 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
             onShowCanDoChange={setShowCanDo}
             showCantDo={showCantDo}
             onShowCantDoChange={setShowCantDo}
+            hideWeekends={hideWeekends}
+            onHideWeekendsChange={setHideWeekends}
             viewingMonth={viewingMonth}  // ADD THIS
             viewingYear={viewingYear}    // ADD THIS
           />
@@ -596,7 +614,8 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
           
           {/* Calendar Body - These cells use the slider-controlled dimensions */}
           <tbody>
-            {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => (
+            
+              {visibleDays.map(day => (
               <tr key={day} className={`border-b hover:bg-gray-25 transition-colors ${currentDay === day ? 'bg-yellow-25' : ''}`}>
                 {/* Sticky Day Column - Fixed size */}
                 <td 
