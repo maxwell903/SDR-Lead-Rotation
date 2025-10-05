@@ -1179,7 +1179,7 @@ const handleRemoveReplacementMark = async (leadId: string) => {
                 onCellClick={handleCellClick}
                 onDeleteEntry={handleDeleteEntry}
                 onEditEntry={handleEditEntry}
-                leads={currentMonthData.leads}
+                leads={dbLeads}
                 replacementState={replacementState}
                 onMarkForReplacement={handleMarkForReplacement}
                 onRemoveReplacementMark={handleRemoveReplacementMark}
