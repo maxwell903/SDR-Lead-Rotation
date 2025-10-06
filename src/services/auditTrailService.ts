@@ -266,12 +266,18 @@ export async function transformAuditAction(
                    'Unknown User';
 
   // Column 2: Action Type
+
+  // - Update OOO / Update SKIP when it's an update (no hit_value_change logged)
+  // - ADD OOO / ADD SKIP when it's an insert (hit_value_change present: 0 or 1)
   let actionType = '';
-  if (action.action_type === 'UPDATE' && action.action_subtype === 'SKIP') {
-    actionType = 'Skip Update';
-  } else if (action.action_type === 'UPDATE' && action.action_subtype === 'OOO') {
-    actionType = 'OOO Update';
-  } else {
+ if (
+    action.table_name === 'non_lead_entries' &&
+    (action.action_subtype === 'SKIP' || action.action_subtype === 'OOO')
+ ) {
+    const isUpdate = action.hit_value_change === null || action.hit_value_change === undefined;
+    const label = action.action_subtype === 'SKIP' ? 'SKIP' : 'OOO';
+    actionType = isUpdate ? `Update ${label}` : `ADD ${label}`;
+ } else {
     actionType = formatActionType(action.action_subtype || action.action_type);
   }
 
