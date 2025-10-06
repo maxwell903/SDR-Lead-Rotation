@@ -1,0 +1,147 @@
+Audit trail:
+
+We need to make an Audit trail component in a new file that will appear under the calendar and show every action in the data base with information about those actions.
+It needs to show the most recent action at the top and every group of actions should be grouped by the date that it happened.
+The list will show 6 columns with each row being an action.
+
+columns:
+1) Username that performed the action (from the users in supabase not the ID but the actual username associated, each user is associated with the email they used to sign up)
+2) Action Type (Create, Reorder, Delete for sales reps and for entries ADD NL, Delete NL, NL -> MFR, MFR -> NL, MFR -> LRL ⇄ LTR, Delete MFR, Delete LRL LTR -> MFR, non entry types OOO, Skip)
+3) Account number for leads/ nothing for sales rep actions/ Time input for skips and OOOs
+4) Sales rep names that the action is attached to
+5) Hit Value added for lead entries or skips/ for sales rep reorders show the beginning position of the sales rep before the reorder then the new position of the sales rep after the reorder/ For sales rep deletes and addes just say the position they were added to or deleted from.
+6) hit Value total after the hit value added is added (5 and 6 should show like a math equation [hitvalue] + or - = total hitvalue for that sales rep this action is for)/ for sales rep reorders show the sales rep that took the sales rep that you moved spot.
+7) time the action was done in the system
+8) username associated with who did that did said action
+
+This needs to be an efficient Audit trail and should spawn from a drop down under the calendar grid. The first initial click of the drop down will just show todays actions and there will be a "Show next Days Actions" Button under that expanding the drop down even further and showing all the actions from the next day their is activity in.
+
+
+
+Things we have left to fix
+
+SKIP GIVES 2 HITS FOR SOME REASON
+
+Username per action
+
+Edit OOO (duplicates)
+
+Edit skip (duplicates)
+
+Audit Trail:
+
+
+
+
+Fixes:
+
+
+
+
+
+Must fixes
+
+For the NonleadEntryEdit and the Calendar grid we need this to behave like everything else and when hitting update it shows the changes on the calendar grid for all users as well as  the current user. Right now it makes me refresh to see the changes but the other user on another device sees it right away when changing dates. Both users have to refresh to see a time change. All changes should be visible to both the user who input the device and all users logged in on different devices immediately upon hitting update. Things that are already working upon hitting update Audit trial updates for both skip and OOO, Changing dates and rotation options refresh on the other users screen but not the user who input it so that is partially working. Things that need to be updated automatically and is making me refresh the page to see on both devices are: changing of time. pleas 
+
+For Skips the Time field is not in the Skip edit modal and it should be.
+
+Add Sales rep doesn't send a row to the audit trail when adding a sales rep.
+
+Username per action is still just showing unknown user
+
+
+Would be nice fixes
+
+Make the Mark as replacement button disappear from the LTR lead edit modal and replaced with A summary of the lead it is being replaced by
+
+Add a highlight feature for update lead and update OOO and Update SKP where the audit trail will highlight the field changed in the audit trail table, For example if you changed the Account number On the update lead row the Account number would be highlighted and when you hover over it, it shows what it was changed from.
+
+If a entry on the calendar has a comment put a little pink triangle in the corner of the box and when you hover over it, it shows the comment logs, in a little hover pop up.
+
+
+
+
+Enhancements
+
+Basic Filters:
+
+Filter by Lead Entry Type: NL (shows only ADD NL actions and Delete NL actions and UPDATE NL actions), MFR (shows MFR --> NL actions and NL --> MFR actions), LRL (Shows MFR → LRL ⇄ LTR actions and Delete LRL actions),
+
+Filter by non-Lead Entry Type:  OOO (Shows only Add and Update and Delete OOO) Skip (shows only ADD SKP and Update SKP and Delete SKP)
+
+Filter by Sales Rep: Operation: ADD (shows only Add Sales Rep actions Update Sales Rep Actions Delete Sales Rep actions)
+
+Filter by Created By: [List of Users that are authenticated] (when toggled on it shows all rows assigned to the user or users that are selected here.
+
+Filter by Sales Rep: [List of current Sales reps] (shows all rows assigned to a specific sales rep), for this add a toggle for "Unassinged" along with the sales reps name to catch any rows that may be assigned to a sales rep that is deleted (when sales rep deleted their associated line turns into RepID# wich is fine but we want to beable to filter for all of the ones with a repID as a group in a "Unassigned":
+
+Filter by Date: Calendar date picker (shows all of the rows that have the same date input from the creation input field (not the time stamp they are already sorted by time stamp this should be the date field)
+
+Filter by Lane: Sub 1k (shows only rows with the sub 1k tag), 1k plus (shows only rows with the 1k+ tag) , If this is null then show for both neither of the toggles exclude null
+
+
+
+
+
+Advanced Filters
+Filter by Relevant/Hide Reverses:
+Hide Deleted Entries only - Removes entries that have account numbers that match a that have been canceled out by a delete after the fact the lead with the account number NL was created. So you are comparing the entries and see which rows have a matching account number and if their is a delete for the an account number and that delete is time stamped after the corresponding account number row was created then you remove it from the list in the UI. It removes the delete as well the point of this is to get rid of the busyness and only look at leads that are currently effecting the hit count. This should remove all entries associated with this account number that came before the delete time stamp so this includes if all the rows if the life cycle was NL, NL --> MFR, MFR --> NL, Nl --> MFR, MFR → LRL ⇄ LTR, Delete LRL, ending with MFR --> NL the only row from this account number would be MFR --> NL.
+If they leads life cycle was: NL, NL --> MFR, MFR --> NL, Nl --> MFR, MFR → LRL ⇄ LTR, Delete LRL, MFR --> NL, ending with NL, the audit trail will show nothing from this account number as it doesnt exist on the calendar anymore. If account number is null keep it in for all toggles none of them should exclude null
+
+
+
+
+
+Select Undo toggle that when toggled on will trigger a hover animation and a select box. The hover animation will spawn a mini rotation panel that shows the collapsed view, The expanded view toggle will be there too but it wil default to collapsed view, to the right of the audit trail that shows what would happen to the order if we were to undo that action (essentially if the action never existed or was reversed or the action was deleted how would it effect the Relevant lanes current rotation order for and replacement rotation order for entries and non entries, then for sales rep Delete, ADD, Reorder operations it would show how it would effect the Current Order, Replacement Order and the Original order. We need to be able to view the audit trail so this pop up should display to the right of it. Then if you select multiple rows it will show you the Current Order, Replacement order and the Original order with all of the changes from the reverse of each action selected. This will update as you select each row showing the net impact of reverse all the actions you have selected. There will be an undo selected actions that will spawn with the Undo toggle and after selecting a one or more rows that when clicked will delete the action from the action table, deleting any trace of the action from all tables. Here is what undoing of every action is:
+
+Undo : ADD NL, (behaves like a normal Delete NL Function but doesn't create a new Delete NL action row and it moves the ADD NL to the Undone list)
+
+
+Undo : Delete NL,  (behaves like a normal ADD NL Function but doesn't create a new ADD NL action row and it moves the Delete NL action row to the Undone list)
+
+
+Undo : Update Lead, Make the field that was changed revert back to what ever the field was before the change. (This should not create a new Update Lead action row and should move the original Update Lead action row to the Undone list)
+
+Undo: NL --> MFR, (behaves like a normal MFR <-- NL Function but doesn't add a new MFR <--- NL action row and it moves the NL --> MFR action row to the Undone List)
+
+
+
+Undo: MFR --> NL,  (behaves like a normal NL --> MFR Function but doesn't add a new NL --> MFR action row and moves the MFR --> NL action row to the Undone List)
+
+Undo: MFR → LRL ⇄ LTR, (behaves like Delete LRL function but doesn't add a new Delete LRL action row and moves the MFR → LRL ⇄ LTR action row to the Undone List)
+
+Undo: Delete LTR, (behaves like a normal MFR → LRL ⇄ LTR function but doesnt add a new MFR → LRL ⇄ LTR action row and moves the Delete LTR action row to the Undone List)
+
+
+Undo: ADD OOO -  (behaves like a normal delete from the OOO NonLeadEntry pop up but it doesnt create a new action row and moves the Add OOO action row to the Undone List)
+
+Undo: Delete OOO - (behaves like a normal add OOO from the NonLeadEntry pop up but it doesnt create a new Add OOO action row and moves the Delete action row to the Undone List)
+
+Undo: ADD SKP -  (behaves like a normal delete from the SKP NonLeadEntry pop up but it doesnt create a new Delete SKP action row and moves the ADD SKP action row to the Undone List)
+
+Undo: Delete SKP -  (behaves like a normal ADD SKP from the NonLeadEntry pop up but it doesnt create a new ADD SKP action row and moves the Delete SKP action row to the Undone List)
+
+Undo: ADD Sales Rep - (behaves like a Delete Sales Rep from the Rep Manager pop up but it doesnt create a new Delete Sales Rep action row and moves the ADD Sales Rep Action row to the Undone List)
+
+Undo: Delete Sales Rep - This will prompt you for the name of the sale rep this [rep Id was for] and then you type it in and then you can hit cancel or save and if you save it will add that sales rep back under that same rep ID associated with this row. This will also delete the action row from the action table
+
+Undo: Reorder Sales Rep - this will just reorder the sales reps to the way they were before you reordered them associated with this action row, it will also delete the action row associated with that reorder action
+
+
+
+
+
+
+
+
+Things I want to add
+
+Filter by Chronological by Day (show more for previous day with every day having a small summary box that shows the current order and previous order of the sales reps at the end of each day), Reverse Chronological by Day (show more for next day), Sales Rep, Action, User)
+
+Undo toggle. This toggle will turn the register rows into selectable items that when each on is selected it would spawn a pop up of the Current Order, Replacement Order, and the Original Order off to the right where the rotation panel is so it doesnt interfere with the selecting. As you select each one the pop up would update with what the roation order were to be if you were to rever this action. Then once you are done selecting you there will be a button that says undo. Once you hit undo it will give you a pop up saying are you sure you? then a cancel or Undo. This will then reverse the action from the data base along with its asscoiated leads/Rotation by adding a new entry under Action type UNDO/[original action type] and delete remove them from the Calendar grid, As well as updating all tables necessary like the hitcounts with reverse entries. 
+
+
+Search bar, Search by account number and type. when clicked it will take you to the lead in the calendar on any month
+
+
+Statistics panel
