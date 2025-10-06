@@ -6,7 +6,6 @@ import { SalesRep } from '../types';
 import { DatePicker } from './DatePicker';
 import { TimeInput } from './TimeInput';
 
-// Internal DeleteConfirmationModal component
 interface DeleteConfirmationModalProps {
   isOpen: boolean;
   onConfirm: () => void;
@@ -20,6 +19,19 @@ const DeleteConfirmationModal: React.FC<DeleteConfirmationModalProps> = ({
   onCancel,
   title
 }) => {
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleConfirm = async () => {
+    if (isDeleting) return; // Prevent multiple clicks
+    
+    setIsDeleting(true);
+    try {
+      await onConfirm();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -28,14 +40,31 @@ const DeleteConfirmationModal: React.FC<DeleteConfirmationModalProps> = ({
         <h3 className="text-lg font-semibold text-gray-800 mb-4">{title}</h3>
         <div className="flex space-x-3">
           <button
-            onClick={onConfirm}
-            className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-all font-medium"
+            onClick={handleConfirm}
+            disabled={isDeleting}
+            className={`flex-1 py-2 px-4 rounded-lg transition-all font-medium ${
+              isDeleting
+                ? 'bg-red-400 cursor-not-allowed'
+                : 'bg-red-600 hover:bg-red-700'
+            } text-white`}
           >
-            Yes
+            {isDeleting ? (
+              <div className="flex items-center justify-center space-x-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                <span>Deleting...</span>
+              </div>
+            ) : (
+              'Yes'
+            )}
           </button>
           <button
             onClick={onCancel}
-            className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition-all font-medium"
+            disabled={isDeleting}
+            className={`flex-1 py-2 px-4 rounded-lg transition-all font-medium ${
+              isDeleting
+                ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+            }`}
           >
             No
           </button>

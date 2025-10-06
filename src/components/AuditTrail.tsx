@@ -220,7 +220,7 @@ const getLaneColor = (lane: string): string => {
   };
 
   return (
-    <div className="mt-6 bg-white rounded-lg shadow-sm border">
+    <div className="mt-6 rounded-lg shadow-sm border bg-[var(--audit-bg)] border-[var(--audit-border)]">
       {/* Dropdown Header */}
       <button
         onClick={toggleOpen}

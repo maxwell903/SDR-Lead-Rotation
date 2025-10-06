@@ -273,11 +273,12 @@ const getEntriesForCell = (day: number, repId: string, rotationContext: 'sub1k' 
   };
 
   const getCellStyle = (entries: LeadEntry[], day: number) => {
-    let baseStyle = 'bg-white hover:bg-gray-50';
+    let baseStyle = '';
     
     // Highlight current day
     if (currentDay === day) {
-      baseStyle = 'bg-yellow-50 hover:bg-yellow-100 border-l-4 border-yellow-400';
+     baseStyle = 'border-l-4';
+     return baseStyle; // Apply via inline style below
     }
     
     if (entries.length === 0) return baseStyle;
@@ -287,10 +288,10 @@ const getEntriesForCell = (day: number, repId: string, rotationContext: 'sub1k' 
     const hasOOO = entries.some(e => e.type === 'ooo');
     const hasNext = entries.some(e => e.type === 'next');
     
-    if (hasOOO) return 'bg-red-100 border-red-200 hover:bg-red-150';
-    if (hasSkip) return 'bg-yellow-100 border-yellow-200 hover:bg-yellow-150';
-    if (hasNext) return 'bg-green-100 border-green-200 hover:bg-green-150';
-    if (hasLead) return 'bg-blue-100 border-blue-200 hover:bg-blue-150';
+   if (hasOOO) return 'state-ooo';
+   if (hasSkip) return 'state-skip';
+   if (hasNext) return 'state-next';
+   if (hasLead) return 'state-lead';
     
     return baseStyle;
   };
@@ -466,7 +467,11 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border" style={containerStyles}>
+    <div
+  className="rounded-lg shadow-sm border bg-[var(--panel-bg)] border-[var(--panel-border)]"
+  style={containerStyles}
+>
+
       {/* Header with controls */}
       <div className="p-4 border-b">
         <div className="flex justify-between items-center">
