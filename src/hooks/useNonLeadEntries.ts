@@ -1,5 +1,5 @@
 // src/hooks/useNonLeadEntries.ts
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import type { NonLeadEntry } from '../services/nonLeadEntriesService';
 import {
@@ -17,6 +17,12 @@ export function useNonLeadEntries(month: number, year: number) {
   type State = { entries: NonLeadEntry[]; loading: boolean; error: string | null };
   const [state, setState] = useState<State>({ entries: [], loading: true, error: null });
 
+  // Keep a live pointer to entries for the subscription callback
+const entriesRef = useRef<NonLeadEntry[]>([]);
+useEffect(() => {
+  entriesRef.current = state.entries;
+}, [state.entries]);
+
   // ---------- helpers ----------
   const upsertLocal = useCallback((row: NonLeadEntry) => {
     setState((s) => {
@@ -32,15 +38,7 @@ export function useNonLeadEntries(month: number, year: number) {
     setState((s) => ({ ...s, entries: s.entries.filter((e) => e.id !== id) }));
   }, []);
 
-  const replaceTempId = useCallback((tempId: string, realId: string) => {
-    setState((s) => {
-      const i = s.entries.findIndex((e) => e.id === tempId);
-      if (i === -1) return s;
-      const copy = s.entries.slice();
-      copy[i] = { ...copy[i], id: realId };
-      return { ...s, entries: copy };
-    });
-  }, []);
+  
 
   const isInScope = useCallback(
     (row: Partial<NonLeadEntry> | null | undefined) => {
@@ -83,94 +81,101 @@ export function useNonLeadEntries(month: number, year: number) {
     };
   }, [month, year]);
 
-  // ---------- realtime subscription ----------
-  useEffect(() => {
-    // one channel per month/year so switching months tears down correctly
-    const channel = supabase
-      .channel(`non_lead_entries:${year}-${month}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'non_lead_entries' },
-        (payload: any) => {
-          const row = normalizeRow(payload.new);
-          if (isInScope(row)) upsertLocal(row);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'non_lead_entries' },
-        (payload: any) => {
-          const rowNew = normalizeRow(payload.new);
-          const rowOld = normalizeRow(payload.old);
-          // moved out of scope
-          if (isInScope(rowOld) && !isInScope(rowNew)) {
-            removeLocal(rowOld.id);
-            return;
-          }
-          // moved into scope or updated within scope
-          if (isInScope(rowNew)) upsertLocal(rowNew);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'non_lead_entries' },
-        (payload: any) => {
-          const row = normalizeRow(payload.old);
-          if (isInScope(row)) removeLocal(row.id);
-        }
-      )
-      .subscribe();
+// ---------- realtime subscription ----------
+useEffect(() => {
+  const channel = supabase
+    .channel(`non_lead_entries:${year}-${month}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'non_lead_entries',
+      },
+      (payload: any) => {
+        const event = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
+        const rowNew = payload.new ? normalizeRow(payload.new) : undefined;
+        const rowOld = payload.old ? normalizeRow(payload.old) : undefined;
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [month, year, upsertLocal, removeLocal, isInScope]);
+        // INSERT: always has "new"
+        if (event === 'INSERT') {
+          if (rowNew && isInScope(rowNew)) {
+            upsertLocal(rowNew);
+          }
+          return;
+        }
+
+        // UPDATE: "new" may be partial if replica identity isn't FULL
+        if (event === 'UPDATE') {
+          const id = (rowNew?.id ?? rowOld?.id) as string | undefined;
+          if (!id) return;
+
+          // Use what we have: merge payload.new into the existing record (if any)
+          const prev = entriesRef.current.find(e => e.id === id);
+          const merged: NonLeadEntry | undefined = prev
+            ? ({ ...prev, ...(rowNew || {}) } as NonLeadEntry)
+            : (rowNew as NonLeadEntry | undefined);
+
+          // If we can’t build a meaningful row, bail
+          if (!merged) return;
+
+          const wasInScope = prev ? isInScope(prev) : (rowOld ? isInScope(rowOld) : false);
+          const nowInScope = isInScope(merged);
+
+          if (nowInScope) {
+            upsertLocal(merged);
+          } else if (wasInScope && !nowInScope) {
+            removeLocal(id);
+          }
+          return;
+        }
+
+        // DELETE: "old" may only include PK if replica identity isn't FULL
+        if (event === 'DELETE') {
+          const id = (rowOld?.id ?? rowNew?.id) as string | undefined;
+          if (!id) return;
+
+          // Only remove if the entry exists in the current month/year
+          const existsHere = entriesRef.current.some(e => e.id === id);
+          if (existsHere) {
+            removeLocal(id);
+          }
+        }
+      }
+    )
+    .subscribe((status) => {
+      console.log('📡 non_lead_entries channel status:', status);
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [month, year, upsertLocal, removeLocal, isInScope]);
+
+
+  
 
   // ---------- optimistic actions ----------
   const addNonLead = useCallback(
     async (input: Omit<NonLeadEntry, 'id'>) => {
-      const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const optimistic: NonLeadEntry = { id: tempId, ...input };
-      upsertLocal(optimistic);
-      try {
-        const created = await createNonLeadEntry(input);
-        replaceTempId(tempId, created.id);
-        return created;
-      } catch (e) {
-        removeLocal(tempId);
-        throw e;
-      }
+      
+      // FINAL BODY (keep this)
+const created = await createNonLeadEntry(input);
+return created;
+
     },
-    [upsertLocal, replaceTempId, removeLocal]
+    []
   );
 
-  const updateNonLead = useCallback(
-    async (id: string, patch: Partial<NonLeadEntry>) => {
-      const before = state.entries.find((e) => e.id === id);
-      if (before) upsertLocal({ ...before, ...patch });
-      try {
-        await updateNonLeadEntry(id, patch);
-      } catch (e) {
-        if (before) upsertLocal(before);
-        throw e;
-      }
-    },
-    [state.entries, upsertLocal]
-  );
+  const updateNonLead = useCallback(async (id: string, patch: Partial<NonLeadEntry>) => {
+   // No optimistic merge; rely on Realtime UPDATE to update state
+   await updateNonLeadEntry(id, patch);
+  }, []);
 
-  const removeNonLead = useCallback(
-    async (id: string) => {
-      const before = state.entries.find((e) => e.id === id);
-      removeLocal(id);
-      try {
-        await deleteNonLeadEntry(id);
-      } catch (e) {
-        if (before) upsertLocal(before);
-        throw e;
-      }
-    },
-    [state.entries, removeLocal, upsertLocal]
-  );
+  const removeNonLead = useCallback(async (id: string) => {
+    // No optimistic remove; rely on Realtime DELETE to update state
+    await deleteNonLeadEntry(id);
+  }, []);
 
   const refresh = useCallback(async () => {
     setState((s) => ({ ...s, loading: true, error: null }));
