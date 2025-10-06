@@ -588,7 +588,7 @@ export async function updateNonLeadEntry(
     recordId: updated.id,
     affectedRepId: updated.repId,
     timeInput: updated.time || '',
-    hitValueChange: updated.entryType === 'SKP' ? 1 : 0,
+    hitValueChange: undefined,
     hitValueTotal: totalBeforeAction,
     lane: laneValue as any,
     actionDay: updated.day,

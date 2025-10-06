@@ -266,7 +266,14 @@ export async function transformAuditAction(
                    'Unknown User';
 
   // Column 2: Action Type
-  const actionType = formatActionType(action.action_subtype || action.action_type);
+  let actionType = '';
+  if (action.action_type === 'UPDATE' && action.action_subtype === 'SKIP') {
+    actionType = 'Skip Update';
+  } else if (action.action_type === 'UPDATE' && action.action_subtype === 'OOO') {
+    actionType = 'OOO Update';
+  } else {
+    actionType = formatActionType(action.action_subtype || action.action_type);
+  }
 
   // Column 3: Account Number or Time
   let accountNumberOrTime: string | null = null;
