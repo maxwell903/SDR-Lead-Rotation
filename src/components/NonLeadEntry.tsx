@@ -1,5 +1,5 @@
 // src/components/NonLeadEntry.tsx
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, Trash2, ChevronDown } from 'lucide-react';
 import { NonLeadEntry } from '../services/nonLeadEntriesService';
 import { SalesRep } from '../types';
@@ -73,11 +73,30 @@ const NonLeadEntryModal: React.FC<NonLeadEntryModalProps> = ({
     comments: [] as string[],
   });
 
-  // Helper to get sales rep name
-  const getSalesRepName = (repId: string) => {
-    const rep = salesReps.find(r => r.id === repId);
-    return rep ? rep.name : 'Unknown Rep';
-  };
+// Get the assigned rep's information (note: entry.repId is the assigned rep in NonLeadEntry)
+const assignedRep = useMemo(() => {
+  return salesReps.find(rep => rep.id === entry.repId);
+}, [salesReps, entry.repId]);
+
+// Check if assigned rep can handle 1K+
+const canAssignedRepHandle1kPlus = useMemo(() => {
+  return assignedRep?.parameters?.canHandle1kPlus === true;
+}, [assignedRep]);
+
+// Auto-correct rotation target if rep doesn't have 1K+ capability
+useEffect(() => {
+  if (!canAssignedRepHandle1kPlus) {
+    if (formData.rotationTarget === 'over1k' || formData.rotationTarget === 'both') {
+      setFormData(prev => ({ ...prev, rotationTarget: 'sub1k' }));
+    }
+  }
+}, [canAssignedRepHandle1kPlus, formData.rotationTarget]);
+
+// Helper to get sales rep name
+const getSalesRepName = (repId: string) => {
+  const rep = salesReps.find(r => r.id === repId);
+  return rep ? rep.name : 'Unknown Rep';
+};
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -124,8 +143,6 @@ const NonLeadEntryModal: React.FC<NonLeadEntryModalProps> = ({
         
         await onUpdate(updateData);
         
-        // ✅ Wait for subscription to update before closing (250ms delay)
-        await new Promise(resolve => setTimeout(resolve, 250));
       }
       
       onClose();
@@ -232,21 +249,20 @@ const NonLeadEntryModal: React.FC<NonLeadEntryModalProps> = ({
               </select>
             </div>
 
-            {/* 3) Time (for OOO only) using TimeInput component */}
-            {entry.entryType === 'OOO' ? (
-              <div className="md:col-span-1">
-                <label className="block text-sm font-bold text-gray-700 mb-3">
-                  Time (Optional)
-                </label>
-                <TimeInput
-                  value={formData.time}
-                  onChange={(time) => setFormData(prev => ({ ...prev, time }))}
-                />
+           
+            {/* 3) Time field for BOTH OOO and Skip */}
+            <div className="md:col-span-1">
+              <label className="block text-sm font-bold text-gray-700 mb-3">
+                Time {entry.entryType === 'OOO' ? '(Optional)' : ''}
+              </label>
+              <TimeInput
+                value={formData.time}
+                onChange={(time) => setFormData(prev => ({ ...prev, time }))}
+              />
+              {entry.entryType === 'OOO' && (
                 <p className="text-xs text-gray-500 mt-1">Leave blank for all-day OOO</p>
-              </div>
-            ) : (
-              <div className="md:col-span-1"></div>
-            )}
+              )}
+            </div>
 
             {/* 4) Date using DatePicker component */}
             <div className="md:col-span-1">
@@ -271,9 +287,26 @@ const NonLeadEntryModal: React.FC<NonLeadEntryModalProps> = ({
                 className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               >
                 <option value="sub1k">Sub $1K Only</option>
-                <option value="over1k">$1K+ Only</option>
-                <option value="both">Both Lanes</option>
+                
+                {/* Only show 1K+ and Both options if the assigned rep has 1K+ capability */}
+                {canAssignedRepHandle1kPlus && (
+                  <>
+                    <option value="over1k">$1K+ Only</option>
+                    <option value="both">Both Lanes</option>
+                  </>
+                )}
               </select>
+              
+              <p className="text-xs text-gray-500 mt-1">
+                {entry.entryType === 'OOO' 
+                  ? 'Select which rotation(s) the rep should be removed from'
+                  : 'Select which rotation(s) should receive the skip'}
+                {!canAssignedRepHandle1kPlus && (
+                  <span className="text-orange-600 font-semibold ml-1">
+                    (Rep does not have 1K+ permissions - only Sub $1K available)
+                  </span>
+                )}
+              </p>
             </div>
 
             {/* 6) Comments */}

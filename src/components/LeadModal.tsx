@@ -132,7 +132,7 @@ const LeadModal: React.FC<LeadModalProps> = ({
   // Date formatting helpers
   
 
-  
+  const [rotationTarget, setRotationTarget] = useState<'sub1k' | 'over1k' | 'both'>('both');
 
   // Get sales rep name helper
   const getSalesRepName = (repId: string) => {
@@ -142,59 +142,74 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
   // Enhanced getEligibleReps with proper parameter filtering
   const getFilteredEligibleReps = useMemo(() => {
-    const leadData = {
-      propertyTypes: formData.propertyTypes,
-      unitCount: formData.unitCount,
-      assignedTo: formData.assignedTo
-    };
-    
-    const isOver1k = (leadData.unitCount ?? 0) >= 1000;
+  const leadData = {
+    propertyTypes: formData.propertyTypes,
+    unitCount: formData.unitCount,
+    assignedTo: formData.assignedTo
+  };
+  
+  const isOver1k = (leadData.unitCount ?? 0) >= 1000;
+  
+  // For OOO/SKIP entries, check rotation target
+  const requiresOver1k = (entryType === 'ooo' || entryType === 'skip') && 
+                         (rotationTarget === 'over1k' || rotationTarget === 'both');
 
+  // Filter sales reps based on parameters
+  const filtered = salesReps.filter(rep => {
+    // Exclude out of office reps
+    if (rep.status === 'ooo') return false;
     
-    // Filter sales reps based on parameters
-    const filtered = salesReps.filter(rep => {
-      // Exclude out of office reps
-      if (rep.status === 'ooo') return false;
-      
-      // For 1K+ leads, rep must be 1K+ capable
-      if (isOver1k && !rep.parameters.canHandle1kPlus) return false;
-      
-      // Check max units constraint
-       if (
-        leadData.unitCount != null &&
-        rep.parameters.maxUnits &&
-        leadData.unitCount > rep.parameters.maxUnits
-      ) return false;
-
-      // Check property types - rep must handle ALL selected property types
-      if (leadData.propertyTypes.length > 0) {
-        const hasAllPropertyTypes = leadData.propertyTypes.every((type: string) => 
-          rep.parameters.propertyTypes.includes(type as any)
-        );
-        if (!hasAllPropertyTypes) return false;
-      }
-      
-      return true;
-    });
-
-    // Sort by rotation order
-    const rotationOrder = isOver1k ? rotationState.normalRotationOver1k : rotationState.normalRotationSub1k;
+    // For 1K+ leads OR NonLeadEntry with 1k target, rep must be 1K+ capable
+    if ((isOver1k || requiresOver1k) && !rep.parameters.canHandle1kPlus) return false;
     
-    return filtered.sort((a, b) => {
-      const aIndex = rotationOrder.indexOf(a.id);
-      const bIndex = rotationOrder.indexOf(b.id);
-      
-      // If both are in rotation order, sort by rotation position
-      if (aIndex !== -1 && bIndex !== -1) {
-        return aIndex - bIndex;
-      }
-      // If only one is in rotation, prioritize it
-      if (aIndex !== -1) return -1;
-      if (bIndex !== -1) return 1;
-      // If neither is in rotation, sort alphabetically
-      return a.name.localeCompare(b.name);
-    });
-  }, [formData.propertyTypes, formData.unitCount, salesReps, rotationState]);
+    // Check max units constraint
+    if (
+      leadData.unitCount != null &&
+      rep.parameters.maxUnits &&
+      leadData.unitCount > rep.parameters.maxUnits
+    ) return false;
+
+    // Check property types - rep must handle ALL selected property types
+    if (leadData.propertyTypes.length > 0) {
+      const hasAllPropertyTypes = leadData.propertyTypes.every((type: string) => 
+        rep.parameters.propertyTypes.includes(type as any)
+      );
+      if (!hasAllPropertyTypes) return false;
+    }
+    
+    return true;
+  });
+
+  // Sort by rotation order
+  const rotationOrder = isOver1k || requiresOver1k 
+    ? rotationState.normalRotationOver1k 
+    : rotationState.normalRotationSub1k;
+  
+  return filtered.sort((a, b) => {
+    const aIndex = rotationOrder.indexOf(a.id);
+    const bIndex = rotationOrder.indexOf(b.id);
+    
+    // If both are in rotation order, sort by rotation position
+    if (aIndex !== -1 && bIndex !== -1) {
+      return aIndex - bIndex;
+    }
+    // If only one is in rotation, prioritize it
+    if (aIndex !== -1) return -1;
+    if (bIndex !== -1) return 1;
+    // If neither is in rotation, sort alphabetically
+    return a.name.localeCompare(b.name);
+  });
+}, [formData.propertyTypes, formData.unitCount, salesReps, rotationState, entryType, rotationTarget]);
+
+// Get the assigned rep's information
+const assignedRep = useMemo(() => {
+  return salesReps.find(rep => rep.id === formData.assignedTo);
+}, [salesReps, formData.assignedTo]);
+
+// Check if assigned rep can handle 1K+
+const canAssignedRepHandle1kPlus = useMemo(() => {
+  return assignedRep?.parameters?.canHandle1kPlus === true;
+}, [assignedRep]);
 
   // Initialize form data
   useEffect(() => {
@@ -209,6 +224,11 @@ const LeadModal: React.FC<LeadModalProps> = ({
         date: selectedDate || new Date()
       });
       setEntryType(editingEntry.type);
+
+       if (editingEntry.rotationTarget) {
+      setRotationTarget(editingEntry.rotationTarget as 'sub1k' | 'over1k' | 'both');
+       }
+
     } else {
       const defaultDate = selectedCell ? 
   new Date(selectedCell.year, selectedCell.month, selectedCell.day) : 
@@ -243,6 +263,15 @@ const LeadModal: React.FC<LeadModalProps> = ({
       }
     }
   }, [formData.propertyTypes, formData.unitCount, entryType, getFilteredEligibleReps, selectedCell, isEditing, getNextInRotation]);
+
+  // Auto-correct rotation target if rep doesn't have 1K+ capability
+useEffect(() => {
+  if ((entryType === 'skip' || entryType === 'ooo') && !canAssignedRepHandle1kPlus) {
+    if (rotationTarget === 'over1k' || rotationTarget === 'both') {
+      setRotationTarget('sub1k');
+    }
+  }
+}, [entryType, canAssignedRepHandle1kPlus, rotationTarget]);
 
   // Get original lead info for replacement validation
   const originalLeadInfo = useMemo(() => {
@@ -391,9 +420,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
         repId: formData.assignedTo,
         assignedTo: formData.assignedTo,
         rotationTarget: entryType === 'lead'
-          ? ((formData.unitCount ?? 0) >= 1000 ? 'over1k' : 'sub1k')
-          : 'sub1k',
-         oooTime: (entryType === 'ooo' || entryType === 'skip') ? oooTime : undefined,
+        ? ((formData.unitCount ?? 0) >= 1000 ? 'over1k' : 'sub1k')
+        : rotationTarget, // Use state variable for OOO/Skip
+        oooTime: (entryType === 'ooo' || entryType === 'skip') ? oooTime : undefined,
         replaceToggle,
         originalLeadIdToReplace: replaceToggle ? originalLeadIdToReplace : undefined,
         id: editingEntry?.id
@@ -459,6 +488,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
   // --- Height sync: make replacement box match account number block when collapsed ---
   const accBoxRef = useRef<HTMLDivElement | null>(null);
   const [collapsedMinH, setCollapsedMinH] = useState<number | undefined>(undefined);
+
+  
 
   useEffect(() => {
     const el = accBoxRef.current;
@@ -699,14 +730,19 @@ const LeadModal: React.FC<LeadModalProps> = ({
             )}
 
             {/* 8. Assign Sales Rep and Time (side-by-side for OOO/Skip) */}
-            {/* For OOO and Skip: appears right after Date on the same row */}
             {(entryType === 'ooo' || entryType === 'skip') && (
-              <>
+                <>
+                {/* Assign Sales Rep */}
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-bold text-gray-700 mb-3">Assign Sales Rep *</label>
+                  <label className="block text-sm font-bold text-gray-700 mb-3">
+                    Assign Sales Rep *
+                  </label>
                   <select
                     value={formData.assignedTo}
-                    onChange={(e) => !replaceToggle && setFormData(prev => ({ ...prev, assignedTo: e.target.value }))}
+                    onChange={(e) => !replaceToggle && setFormData(prev => ({ 
+                      ...prev, 
+                      assignedTo: e.target.value 
+                    }))}
                     className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
                     required
                   >
@@ -715,19 +751,56 @@ const LeadModal: React.FC<LeadModalProps> = ({
                       const position = getRepPositionInRotation(rep.id);
                       return (
                         <option key={rep.id} value={rep.id}>
-                          {position ? `${position}. ` : ''}{rep.name} {rep.status === 'ooo' ? '(Out of Office)' : ''}
+                          {position ? `${position}. ` : ''}{rep.name} 
+                          {rep.status === 'ooo' ? '(Out of Office)' : ''}
                         </option>
                       );
                     })}
                   </select>
                 </div>
 
+                {/* Time */}
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-bold text-gray-700 mb-3">Time</label>
+                  <label className="block text-sm font-bold text-gray-700 mb-3">
+                    Time
+                  </label>
                   <TimeInput
                     value={oooTime}
                     onChange={setOooTime}
                   />
+                </div>
+
+                {/* Rotation Target */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-bold text-gray-700 mb-3">
+                    Rotation Target
+                  </label>
+                  <select
+                    value={rotationTarget}
+                    onChange={(e) => setRotationTarget(e.target.value as 'sub1k' | 'over1k' | 'both')}
+                    className="w-full p-3 border-2 border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-blue-50"
+                  >
+                    <option value="sub1k">Sub $1K Only</option>
+                    
+                    {/* Only show 1K+ and Both options if the assigned rep has 1K+ capability */}
+                    {canAssignedRepHandle1kPlus && (
+                      <>
+                        <option value="over1k">$1K+ Only</option>
+                        <option value="both">Both Lanes</option>
+                      </>
+                    )}
+                  </select>
+                  
+                  <p className="text-xs text-gray-500 mt-1">
+                    {entryType === 'ooo' 
+                      ? 'Select which rotation(s) the rep should be removed from'
+                      : 'Select which rotation(s) should receive the skip'}
+                    {!canAssignedRepHandle1kPlus && (
+                      <span className="text-orange-600 font-semibold ml-1">
+                        (Rep does not have 1K+ permissions - only Sub $1K available)
+                      </span>
+                    )}
+                  </p>
                 </div>
               </>
             )}

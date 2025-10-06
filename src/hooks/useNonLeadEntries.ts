@@ -8,6 +8,7 @@ import {
   updateNonLeadEntry,
   subscribeNonLeadEntries 
 } from '../services/nonLeadEntriesService';
+import { supabase } from '../lib/supabase';
 
 type State = {
   entries: NonLeadEntry[];
@@ -57,101 +58,114 @@ export function useNonLeadEntries(month?: number, year?: number) {
     }
   }, [month, year]);
 
+ 
   useEffect(() => {
   console.log('[useNonLeadEntries] Setting up subscription');
   
   // Initial load
   refresh();
   
-  // Subscribe to changes with INCREASED DEBOUNCE for database transaction commit
-  const unsubscribe = subscribeNonLeadEntries((payload) => {
-    console.log('[useNonLeadEntries] Database change detected:', payload.eventType);
-    
-    // Clear any pending timer
-    if (refreshTimer.current) {
-      window.clearTimeout(refreshTimer.current);
-    }
-    
-    // Debounce for 150ms to ensure DB transaction is committed (increased from 60ms)
-    refreshTimer.current = window.setTimeout(() => {
-      console.log('[useNonLeadEntries] ⚡ Executing debounced refresh for calendar');
-      refresh();
-      refreshTimer.current = null;
-    }, 150);
-  });
+  // ✅ FIX: Use SHARED channel name so ALL users get updates
+  const channel = supabase
+    .channel('non_lead_entries_changes')  // ✅ Same channel for all users
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'non_lead_entries',
+    }, (payload) => {
+      console.log('[useNonLeadEntries] 📢 Database change detected:', payload.eventType);
+      
+      // Clear any pending timer
+      if (refreshTimer.current) {
+        window.clearTimeout(refreshTimer.current);
+      }
+      
+      // ✅ Debounce for 200ms and use refresh() which has fresh month/year
+      refreshTimer.current = window.setTimeout(() => {
+        console.log('[useNonLeadEntries] ⚡ Executing debounced refresh');
+        refresh(); // ✅ This captures current month/year from closure!
+        refreshTimer.current = null;
+      }, 200);
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('[useNonLeadEntries] ✅ Subscription active for channel:', channel.topic);
+      } else if (status === 'CHANNEL_ERROR') {
+        console.error('[useNonLeadEntries] ❌ Subscription error');
+      }
+    });
   
   // Cleanup
   return () => {
-    console.log('[useNonLeadEntries] Cleaning up subscription');
+    console.log('[useNonLeadEntries] 🧹 Cleaning up subscription');
     if (refreshTimer.current) {
       window.clearTimeout(refreshTimer.current);
     }
-    unsubscribe();
+    supabase.removeChannel(channel);
   };
-}, [refresh]);
-  
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [refresh]); // ✅ CRITICAL: Only depend on refresh, NOT month/year!
+
+
 
   /**
    * Create a single non-lead entry
    */
   const addNonLeadEntry = async (entry: Omit<NonLeadEntry, 'id' | 'createdAt' | 'updatedAt'>) => {
-        
-    try {
-      const created = await createNonLeadEntry(entry);
-      setState(s => ({ ...s, entries: dedupeById([created, ...s.entries]) }));
-     // Don't update local state - let the subscription broadcast to all users
-     console.log('[useNonLeadEntries] Created entry, waiting for subscription update:', created.id);
-      return created;
-    } catch (e: any) {
-      
-      throw e;
-    } finally {
-      busy.current = false;
-    }
-  };
-
+  if (busy.current) return;
+  busy.current = true;
+  
+  try {
+    const created = await createNonLeadEntry(entry);
+    // ✅ Don't update local state - let subscription broadcast to ALL users
+    console.log('[useNonLeadEntries] Created entry, waiting for subscription update:', created.id);
+    return created;
+  } catch (e: any) {
+    setState(s => ({ ...s, error: e?.message ?? 'Failed to create non-lead entry' }));
+    throw e;
+  } finally {
+    busy.current = false;
+  }
+};
   /**
    * Delete a single non-lead entry
    */
   const removeNonLeadEntry = async (id: string) => {
-    if (busy.current) return;
-    busy.current = true;
-    
-    try {
-      await deleteNonLeadEntry(id);
-      setState(s => ({ 
-        ...s, 
-        entries: s.entries.filter(e => e.id !== id) 
-      }));
-    } catch (e: any) {
-      setState(s => ({ ...s, error: e?.message ?? 'Failed to delete non-lead entry' }));
-      throw e;
-    } finally {
-      busy.current = false;
-    }
-    
-  };
+  if (busy.current) return;
+  busy.current = true;
+  
+  try {
+    await deleteNonLeadEntry(id);
+    // ✅ Don't update local state - let subscription broadcast to ALL users
+    console.log('[useNonLeadEntries] Deleted entry, waiting for subscription update:', id);
+  } catch (e: any) {
+    setState(s => ({ ...s, error: e?.message ?? 'Failed to delete non-lead entry' }));
+    throw e;
+  } finally {
+    busy.current = false;
+  }
+};
 
 
   const updateEntry = async (
-    id: string, 
-    updates: Partial<Omit<NonLeadEntry, 'id' | 'repId' | 'entryType' | 'createdAt' | 'updatedAt'>>
-  ) => {
-    if (busy.current) return;
-    busy.current = true;
-    
-    try {
-      const updated = await updateNonLeadEntry(id, updates);
-      // Don't update local state - let the subscription broadcast to all users
-      console.log('[useNonLeadEntries] Updated entry, waiting for subscription update:', updated.id);
-      return updated;
-    } catch (e: any) {
-      setState(s => ({ ...s, error: e?.message ?? 'Failed to update non-lead entry' }));
-      throw e;
-    } finally {
-      busy.current = false;
-    }
-  };
+  id: string, 
+  updates: Partial<Omit<NonLeadEntry, 'id' | 'repId' | 'entryType' | 'createdAt' | 'updatedAt'>>
+) => {
+  if (busy.current) return;
+  busy.current = true;
+  
+  try {
+    const updated = await updateNonLeadEntry(id, updates);
+    // ✅ Don't update local state - let subscription broadcast to ALL users
+    console.log('[useNonLeadEntries] Updated entry, waiting for subscription update:', updated.id);
+    return updated;
+  } catch (e: any) {
+    setState(s => ({ ...s, error: e?.message ?? 'Failed to update non-lead entry' }));
+    throw e;
+  } finally {
+    busy.current = false;
+  }
+};
 
   
 

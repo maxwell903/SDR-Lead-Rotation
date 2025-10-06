@@ -184,7 +184,10 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
 useEffect(() => {
   console.log('🔄 Setting up real-time subscriptions for rotation panel');
   
-  let oooUpdateTimer: NodeJS.Timeout | null = null; // Add debounce timer
+  let oooUpdateTimer: NodeJS.Timeout | null = null;
+  
+  // Generate unique channel ID to prevent conflicts
+  const sessionId = Math.random().toString(36).substring(7);
   
   // 1. Subscribe to rep_hit_counts changes
   const unsubscribeHits = subscribeHitCounts(() => {
@@ -194,7 +197,7 @@ useEffect(() => {
 
   // 2. Subscribe to replacement_marks changes
   const replacementChannel = supabase
-    .channel('replacement_marks_changes')
+    .channel(`replacement_marks_rotation_`)
     .on('postgres_changes', { 
       event: '*', 
       schema: 'public', 
@@ -205,9 +208,9 @@ useEffect(() => {
     })
     .subscribe();
 
-  // 3. Subscribe to lead_entries changes - NOW ALSO REFRESHES HIT COUNTS!
+  // 3. Subscribe to lead_entries changes
   const entriesChannel = supabase
-    .channel('lead_entries_rotation_changes')
+    .channel(`lead_entries_rotation_`)
     .on('postgres_changes', { 
       event: '*', 
       schema: 'public', 
@@ -219,9 +222,10 @@ useEffect(() => {
     })
     .subscribe();
 
-  // 4. Subscribe to non_lead_entries changes with DEBOUNCE FIX
+  
+  // 4. ✅ FIX: Subscribe to non_lead_entries with SHARED channel name
   const nonLeadEntriesChannel = supabase
-    .channel('non_lead_entries_rotation_changes')
+    .channel('non_lead_entries_rotation')  // ✅ Same channel for all users
     .on('postgres_changes', { 
       event: '*', 
       schema: 'public', 
@@ -234,19 +238,19 @@ useEffect(() => {
         clearTimeout(oooUpdateTimer);
       }
       
-      // Debounce for 150ms to ensure DB transaction is committed
+      // Debounce for 200ms to ensure DB transaction is committed
       oooUpdateTimer = setTimeout(() => {
         console.log('⚡ Executing debounced OOO and hit count reload');
         loadOOOStatus();
         loadHitCounts();
         oooUpdateTimer = null;
-      }, 150);
+      }, 200);
     })
     .subscribe();
 
   // 5. Subscribe to sales_reps changes
   const repsChannel = supabase
-    .channel('sales_reps_rotation_changes')
+    .channel(`sales_reps_rotation_`)
     .on('postgres_changes', { 
       event: '*', 
       schema: 'public', 
@@ -764,7 +768,7 @@ useEffect(() => {
   
       {/* Sub 1k Rotation */}
       <div className="space-y-2">
-        <h4 className="text-md font-semibold text-gray-800">Sub $1K Rotation</h4>
+        <h4 className="text-md font-semibold text-gray-800">Sub 1K Rotation</h4>
         {renderRotationLane(
           'Current Order',
           sub1kCollapsed,
@@ -777,7 +781,7 @@ useEffect(() => {
   
       {/* 1k+ Rotation */}
       <div className="space-y-2">
-        <h4 className="text-md font-semibold text-gray-800">$1K+ Rotation</h4>
+        <h4 className="text-md font-semibold text-gray-800">1K+ Rotation</h4>
         {renderRotationLane(
           'Current Order',
           over1kCollapsed,

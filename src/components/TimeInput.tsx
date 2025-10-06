@@ -13,7 +13,7 @@ export const TimeInput: React.FC<TimeInputProps> = ({ value, onChange, disabled 
   const [minute, setMinute] = useState('00');
   const [period, setPeriod] = useState<'AM' | 'PM'>('AM');
 
-  // Parse existing value on mount or when value changes
+  // Parse existing value on mount or when value changes from outside
   useEffect(() => {
     const match = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     if (match) {
@@ -23,27 +23,41 @@ export const TimeInput: React.FC<TimeInputProps> = ({ value, onChange, disabled 
     }
   }, [value]);
 
-  // Update parent when values change
-  useEffect(() => {
-    const formattedTime = `${hour}:${minute} ${period}`;
-    if (formattedTime !== value) {
-      onChange(formattedTime);
-    }
-  }, [hour, minute, period]);
-
   const handleHourChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value) || 0;
+    let newHour = hour;
+    
     if (val >= 1 && val <= 12) {
-      setHour(val.toString());
+      newHour = val.toString();
     } else if (val === 0) {
-      setHour('12');
+      newHour = '12';
+    }
+    
+    setHour(newHour);
+    const formattedTime = `${newHour}:${minute} ${period}`;
+    if (formattedTime !== value) {
+      onChange(formattedTime);
     }
   };
 
   const handleMinuteChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value) || 0;
-    if (val >= 0 && val <= 59) {
-      setMinute(val.toString().padStart(2, '0'));
+    const newMinute = (val >= 0 && val <= 59) ? val.toString().padStart(2, '0') : minute;
+    
+    setMinute(newMinute);
+    const formattedTime = `${hour}:${newMinute} ${period}`;
+    if (formattedTime !== value) {
+      onChange(formattedTime);
+    }
+  };
+
+  const handlePeriodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newPeriod = e.target.value as 'AM' | 'PM';
+    
+    setPeriod(newPeriod);
+    const formattedTime = `${hour}:${minute} ${newPeriod}`;
+    if (formattedTime !== value) {
+      onChange(formattedTime);
     }
   };
 
@@ -75,7 +89,7 @@ export const TimeInput: React.FC<TimeInputProps> = ({ value, onChange, disabled 
         />
         <select
           value={period}
-          onChange={(e) => setPeriod(e.target.value as 'AM' | 'PM')}
+          onChange={handlePeriodChange}
           disabled={disabled}
           className="ml-2 bg-transparent border-none focus:outline-none font-medium text-gray-700 cursor-pointer"
         >

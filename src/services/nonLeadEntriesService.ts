@@ -129,34 +129,105 @@ export async function createNonLeadEntry(
     console.error('Failed to create hit count for non-lead entry:', hitError);
   }
 
-  // ✅ STEP 3: Log audit actions ONCE (after hit counts are created)
+ // ✅ STEP 3: Log audit actions (TWO ROWS for 'both', ONE ROW otherwise)
   if (created.entryType === 'OOO') {
-    await logAuditAction({
-      actionSubtype: 'OOO',
-      tableName: 'non_lead_entries',
-      recordId: created.id,
-      affectedRepId: created.repId,
-      timeInput: created.time || '',  // ✅ Time for OOO
-      hitValueChange: 0,
-      lane: laneValue as any,
-      actionDay: created.day,      // ✅ NEW
-      actionMonth: created.month,  // ✅ NEW
-      actionYear: created.year     // ✅ NEW
-    });
+    if (laneValue === 'both') {
+      // Log two separate rows for OOO
+      await logAuditAction({
+        actionSubtype: 'OOO',
+        tableName: 'non_lead_entries',
+        recordId: created.id,
+        affectedRepId: created.repId,
+        timeInput: created.time || '',
+        hitValueChange: 0,
+        lane: 'sub1k',
+        actionDay: created.day,
+        actionMonth: created.month,
+        actionYear: created.year
+      });
+      await logAuditAction({
+        actionSubtype: 'OOO',
+        tableName: 'non_lead_entries',
+        recordId: created.id,
+        affectedRepId: created.repId,
+        timeInput: created.time || '',
+        hitValueChange: 0,
+        lane: '1kplus',
+        actionDay: created.day,
+        actionMonth: created.month,
+        actionYear: created.year
+      });
+    } else {
+      // Single row for specific lane
+      await logAuditAction({
+        actionSubtype: 'OOO',
+        tableName: 'non_lead_entries',
+        recordId: created.id,
+        affectedRepId: created.repId,
+        timeInput: created.time || '',
+        hitValueChange: 0,
+        lane: laneValue as any,
+        actionDay: created.day,
+        actionMonth: created.month,
+        actionYear: created.year
+      });
+    }
   } else if (created.entryType === 'SKP') {
-    await logAuditAction({
-      actionSubtype: 'SKIP',
-      tableName: 'non_lead_entries',
-      recordId: created.id,
-      affectedRepId: created.repId,
-      timeInput: created.time || '',  // ✅ Time for Skip
-      hitValueChange: 1,
-      hitValueTotal: totalBeforeAction,
-      lane: laneValue as any,
-      actionDay: created.day,      // ✅ NEW
-      actionMonth: created.month,  // ✅ NEW
-      actionYear: created.year     // ✅ NEW
-    });
+    if (laneValue === 'both') {
+      // Get totals for BOTH lanes
+      let totalSub1k = 0;
+      let total1kplus = 0;
+      try {
+        const { getRepHitTotal } = await import('./auditLogger');
+        totalSub1k = await getRepHitTotal(created.repId, 'sub1k', created.month, created.year);
+        total1kplus = await getRepHitTotal(created.repId, '1kplus', created.month, created.year);
+      } catch (err) {
+        console.error('Failed to get hit totals for both lanes:', err);
+      }
+      
+      // Log two separate rows for SKIP
+      await logAuditAction({
+        actionSubtype: 'SKIP',
+        tableName: 'non_lead_entries',
+        recordId: created.id,
+        affectedRepId: created.repId,
+        timeInput: created.time || '',
+        hitValueChange: 1,
+        hitValueTotal: totalSub1k,
+        lane: 'sub1k',
+        actionDay: created.day,
+        actionMonth: created.month,
+        actionYear: created.year
+      });
+      await logAuditAction({
+        actionSubtype: 'SKIP',
+        tableName: 'non_lead_entries',
+        recordId: created.id,
+        affectedRepId: created.repId,
+        timeInput: created.time || '',
+        hitValueChange: 1,
+        hitValueTotal: total1kplus,
+        lane: '1kplus',
+        actionDay: created.day,
+        actionMonth: created.month,
+        actionYear: created.year
+      });
+    } else {
+      // Single row for specific lane (existing logic)
+      await logAuditAction({
+        actionSubtype: 'SKIP',
+        tableName: 'non_lead_entries',
+        recordId: created.id,
+        affectedRepId: created.repId,
+        timeInput: created.time || '',
+        hitValueChange: 1,
+        hitValueTotal: totalBeforeAction,
+        lane: laneValue as any,
+        actionDay: created.day,
+        actionMonth: created.month,
+        actionYear: created.year
+      });
+    }
   }
 
   return created;
@@ -262,39 +333,111 @@ export async function deleteNonLeadEntry(id: string): Promise<void> {
 
   if (deleteError) throw deleteError;
 
-  // ✅ Audit logging with BEFORE values
+
+  // ✅ Audit logging (TWO ROWS for 'both', ONE ROW otherwise)
   const { logAuditAction } = await import('./auditLogger');
-  const actionSubtype = entry.entryType === 'OOO' ? 'DELETE_OOO' : 'DELETE_SKIP';
   
   if (entry.entryType === 'OOO') {
-    await logAuditAction({
-      actionSubtype: 'DELETE_OOO',
-      tableName: 'non_lead_entries',
-      recordId: id,
-      affectedRepId: entry.repId,
-      timeInput: entry.time || '',
-      hitValueChange: 0,  // Deleting OOO has no hit impact
-      hitValueTotal: totalBeforeAction,  
-      lane: laneValue as any,
-      actionDay: entry.day,      
-      actionMonth: entry.month,  
-      actionYear: entry.year     
-    });
+    if (laneValue === 'both') {
+      // Log two separate rows for DELETE_OOO
+      await logAuditAction({
+        actionSubtype: 'DELETE_OOO',
+        tableName: 'non_lead_entries',
+        recordId: id,
+        affectedRepId: entry.repId,
+        timeInput: entry.time || '',
+        hitValueChange: 0,
+        lane: 'sub1k',
+        actionDay: entry.day,
+        actionMonth: entry.month,
+        actionYear: entry.year
+      });
+      await logAuditAction({
+        actionSubtype: 'DELETE_OOO',
+        tableName: 'non_lead_entries',
+        recordId: id,
+        affectedRepId: entry.repId,
+        timeInput: entry.time || '',
+        hitValueChange: 0,
+        lane: '1kplus',
+        actionDay: entry.day,
+        actionMonth: entry.month,
+        actionYear: entry.year
+      });
+    } else {
+      // Single row for specific lane
+      await logAuditAction({
+        actionSubtype: 'DELETE_OOO',
+        tableName: 'non_lead_entries',
+        recordId: id,
+        affectedRepId: entry.repId,
+        timeInput: entry.time || '',
+        hitValueChange: 0,
+        hitValueTotal: totalBeforeAction,
+        lane: laneValue as any,
+        actionDay: entry.day,
+        actionMonth: entry.month,
+        actionYear: entry.year
+      });
+    }
   } else if (entry.entryType === 'SKP') {
-    await logAuditAction({
-      actionSubtype: 'DELETE_SKIP',
-      tableName: 'non_lead_entries',
-      recordId: id,
-      affectedRepId: entry.repId,
-      timeInput: entry.time || '',
-      hitValueChange: -1,  // Deleting skip removes 1 hit
-      hitValueTotal: totalBeforeAction,  
-      lane: laneValue as any,
-      actionDay: entry.day,      
-      actionMonth: entry.month,  
-      actionYear: entry.year     
-    });
+    if (laneValue === 'both') {
+      // Get totals for BOTH lanes
+      let totalSub1k = 0;
+      let total1kplus = 0;
+      try {
+        const { getRepHitTotal } = await import('./auditLogger');
+        totalSub1k = await getRepHitTotal(entry.repId, 'sub1k', entry.month, entry.year);
+        total1kplus = await getRepHitTotal(entry.repId, '1kplus', entry.month, entry.year);
+      } catch (err) {
+        console.error('Failed to get hit totals for both lanes:', err);
+      }
+      
+      // Log two separate rows for DELETE_SKIP
+      await logAuditAction({
+        actionSubtype: 'DELETE_SKIP',
+        tableName: 'non_lead_entries',
+        recordId: id,
+        affectedRepId: entry.repId,
+        timeInput: entry.time || '',
+        hitValueChange: -1,
+        hitValueTotal: totalSub1k,
+        lane: 'sub1k',
+        actionDay: entry.day,
+        actionMonth: entry.month,
+        actionYear: entry.year
+      });
+      await logAuditAction({
+        actionSubtype: 'DELETE_SKIP',
+        tableName: 'non_lead_entries',
+        recordId: id,
+        affectedRepId: entry.repId,
+        timeInput: entry.time || '',
+        hitValueChange: -1,
+        hitValueTotal: total1kplus,
+        lane: '1kplus',
+        actionDay: entry.day,
+        actionMonth: entry.month,
+        actionYear: entry.year
+      });
+    } else {
+      // Single row for specific lane (existing logic)
+      await logAuditAction({
+        actionSubtype: 'DELETE_SKIP',
+        tableName: 'non_lead_entries',
+        recordId: id,
+        affectedRepId: entry.repId,
+        timeInput: entry.time || '',
+        hitValueChange: -1,
+        hitValueTotal: totalBeforeAction,
+        lane: laneValue as any,
+        actionDay: entry.day,
+        actionMonth: entry.month,
+        actionYear: entry.year
+      });
+    }
   }
+  
 }
 
 export async function updateNonLeadEntry(
@@ -398,7 +541,7 @@ export async function updateNonLeadEntry(
     }
   }
 
-  // Update the entry
+  // 🔧 FIX: Update the entry FIRST, THEN log audit
   const { data, error } = await supabase
     .from('non_lead_entries')
     .update({
@@ -413,7 +556,10 @@ export async function updateNonLeadEntry(
 
   const updated = rowToNonLeadEntry(data as DBNonLeadEntryRow);
 
-  // Log to audit trail
+  // 🔧 FIX: Wait a moment to ensure DB write is committed before logging audit
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  // Log to audit trail AFTER database update is committed
   const { logAuditAction } = await import('./auditLogger');
   const laneValue = updated.rotationTarget === 'over1k' ? '1kplus' : 
                     updated.rotationTarget === 'sub1k' ? 'sub1k' : 'both';
@@ -434,7 +580,7 @@ export async function updateNonLeadEntry(
     }
   }
 
-  const actionSubtype = updated.entryType === 'OOO' ? 'UPDATE_OOO' : 'UPDATE_SKIP';
+  const actionSubtype = updated.entryType === 'OOO' ? 'OOO' : 'SKIP';
   
   await logAuditAction({
     actionSubtype: actionSubtype as any,
