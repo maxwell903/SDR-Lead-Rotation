@@ -150,6 +150,22 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
     userId: user.id
   });
 
+  // ✅ STEP 1: Check if already replaced BEFORE attempting update
+  const { data: existingMark, error: checkError } = await supabase
+    .from('replacement_marks')
+    .select('replaced_by_lead_id')
+    .eq('id', markId)
+    .single();
+  
+  if (checkError) throw checkError;
+  
+  // ✅ If already replaced, throw specific error
+  if (existingMark.replaced_by_lead_id) {
+    console.warn('⚠️ Mark already has replacement:', existingMark.replaced_by_lead_id);
+    throw new Error('REPLACEMENT_ALREADY_EXISTS');
+  }
+  
+  // ✅ STEP 2: Now safe to update
   const { data, error } = await supabase
     .from('replacement_marks')
     .update({ 
@@ -161,6 +177,7 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
     .single();
 
   if (error) throw error;
+  
   console.log('Replacement mark updated successfully:', { markId, replacedByLeadId });
   
   // ✅ Store hit count for replacement lead (LRL = 0)
@@ -184,10 +201,6 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
   } catch (hitError) {
     console.error('Failed to store LRL hit count:', hitError);
   }
-  
-  // NOTE: The audit logging for MFR_TO_LRL is now handled in createLeadWithReplacement
-  // where we have access to the new lead's account number and can get the BEFORE value
-  // This function just creates the hit count record
   
   return dbToAppFormat(data);
 }
