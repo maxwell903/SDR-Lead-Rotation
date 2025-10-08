@@ -702,7 +702,7 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
         await createHitCount({
           repId,
           hitType: 'LRL',
-          hitValue: 0,
+          hitValue: -1,
           lane,
           month: now.getMonth() + 1,
           year: now.getFullYear(),

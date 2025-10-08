@@ -191,13 +191,13 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
     await createHitCount({
       repId: data.rep_id,
       hitType: 'LRL',
-      hitValue: 0,
+      hitValue: 1,
       lane: normalizedLane,
       month: currentDate.getMonth() + 1,
       year: currentDate.getFullYear()
     });
     
-    console.log('LRL hit recorded with 0 value');
+    console.log('LRL hit recorded with 1 value');
   } catch (hitError) {
     console.error('Failed to store LRL hit count:', hitError);
   }
