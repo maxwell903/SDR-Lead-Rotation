@@ -30,6 +30,10 @@ type DBSalesRepRow = {
   status: string | null
   updated_by: string | null
   updated_at: string | null
+  cushion_sub1k: number | null
+  cushion_1kplus: number | null
+  cushion_sub1k_occurrences: number | null
+  cushion_1kplus_occurrences: number | null
 }
 
 const rowToRep = (r: DBSalesRepRow): SalesRep => ({
@@ -40,6 +44,10 @@ const rowToRep = (r: DBSalesRepRow): SalesRep => ({
   sub1kOrder: r.sub1k_order ?? 0,
   over1kOrder: r.over1k_order ?? undefined,
   status: (r.status as SalesRep['status']) ?? 'active',
+  cushionSub1k: r.cushion_sub1k ?? 0,
+  cushion1kPlus: r.cushion_1kplus ?? 0,
+  cushionSub1kOccurrences: r.cushion_sub1k_occurrences ?? 0,
+  cushion1kPlusOccurrences: r.cushion_1kplus_occurrences ?? 0,
 })
 
 const repToRow = (rep: SalesRep): Partial<DBSalesRepRow> => ({
@@ -50,6 +58,10 @@ const repToRow = (rep: SalesRep): Partial<DBSalesRepRow> => ({
   sub1k_order: rep.sub1kOrder ?? null,
   over1k_order: rep.over1kOrder ?? null,
   status: rep.status ?? 'active',
+  cushion_sub1k: rep.cushionSub1k ?? 0,
+  cushion_1kplus: rep.cushion1kPlus ?? 0,
+  cushion_sub1k_occurrences: rep.cushionSub1kOccurrences ?? 0,
+  cushion_1kplus_occurrences: rep.cushion1kPlusOccurrences ?? 0,
 })
 
 /** READ all reps */
@@ -81,6 +93,10 @@ export async function createSalesRep(
     sub1kOrder: input.sub1kOrder ?? nextSub1k,
     over1kOrder: input.parameters?.canHandle1kPlus ? (input.over1kOrder ?? nextOver1k ?? null) ?? undefined : undefined,
     status: input.status ?? 'active',
+    cushionSub1k: input.cushionSub1k ?? 0,
+    cushion1kPlus: input.cushion1kPlus ?? 0,
+    cushionSub1kOccurrences: input.cushionSub1kOccurrences ?? 0,
+    cushion1kPlusOccurrences: input.cushion1kPlusOccurrences ?? 0,
   } as SalesRep)
 
   const { data, error } = await supabase
@@ -91,12 +107,12 @@ export async function createSalesRep(
   if (error) throw error
 
   await logAuditAction({
-  actionSubtype: 'CREATE_REP',
-  tableName: 'sales_reps',
-  recordId: data.id,
-  affectedRepId: data.id,
-  positionTo: data.sub1k_order,
-});
+    actionSubtype: 'CREATE_REP',
+    tableName: 'sales_reps',
+    recordId: data.id,
+    affectedRepId: data.id,
+    positionTo: data.sub1k_order,
+  });
 
   return rowToRep(data as DBSalesRepRow)
 }

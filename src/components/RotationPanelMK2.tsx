@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ChevronDown, ChevronUp, Clock, ChevronRight, Minimize2, Maximize2, HelpCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Clock, ChevronRight, Minimize2, Maximize2, HelpCircle, Edit2} from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getNetHitCounts, subscribeHitCounts } from '../services/hitCountsService';
 import type { SalesRep } from '../types';
+import CushionEditModal from './CushionEditModal';
+import { subscribeCushionChanges } from '../services/cushionService';
+import CushionTrackingDisplay from './CushionTrackingDisplay';
+
 
 interface ReplacementLead {
   id: string;
@@ -29,7 +33,11 @@ interface RotationItem {
   displayPosition?: number;
   isNext: boolean;
   hasOpenReplacements?: boolean;
+  appearanceIndex?: number; // ADD THIS LINE
 }
+
+
+
 
 const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({ 
   salesReps, 
@@ -47,6 +55,13 @@ const RotationPanelMK2: React.FC<RotationPanelMK2Props> = ({
   const [oooTargets, setOooTargets] = useState<Map<string, string>>(new Map());
 
   const [refreshKey, setRefreshKey] = useState(0);
+  const [cushionModalOpen, setCushionModalOpen] = useState(false);
+const [editingRep, setEditingRep] = useState<{
+  repId: string;
+  repName: string;
+  lane: 'sub1k' | '1kplus';
+  currentCushion: number;
+} | null>(null);
   
   const month = viewingMonth + 1; // Convert from 0-based to 1-based
   const year = viewingYear;
@@ -269,6 +284,12 @@ useEffect(() => {
     if (oooUpdateTimer) {
       clearTimeout(oooUpdateTimer);
     }
+
+      // ⭐ 6. NEW: Subscribe to cushion changes
+  const unsubscribeCushion = subscribeCushionChanges(() => {
+    console.log('🛡️ Cushion values changed - reloading');
+    loadHitCounts(); // This will refresh the rotation display
+  });
     
     unsubscribeHits();
     supabase.removeChannel(replacementChannel);
@@ -378,6 +399,61 @@ useEffect(() => {
       .map(r => r.id);
   }, [getActiveRepsForLane]);
   
+
+
+// ===== 1. Update getCushionDisplay in RotationPanelMK2.tsx =====
+const getCushionDisplay = useCallback((
+  repId: string, 
+  lane: 'sub1k' | '1kplus',
+  appearanceIndex?: number
+): string => {
+  const rep = salesReps.find(r => r.id === repId);
+  if (!rep) return '';
+  
+  const cushion = lane === 'sub1k' ? (rep.cushionSub1k ?? 0) : (rep.cushion1kPlus ?? 0);
+  const occurrences = lane === 'sub1k' ? (rep.cushionSub1kOccurrences ?? 0) : (rep.cushion1kPlusOccurrences ?? 0);
+  
+  // If no cushion set, don't show anything
+  if (cushion === 0) return '';
+  
+  // If appearanceIndex is not provided (collapsed view or original order), show current cushion
+  if (appearanceIndex === undefined) {
+    return ` x${cushion}`;
+  }
+  
+  // FIXED: occurrences now represents TOTAL appearances, not additional ones
+  // If user sets "4", they see x2 exactly 4 times
+  const totalCushionedAppearances = occurrences;
+  
+  // Only show cushion if this appearance is within the cushioned range
+  if (appearanceIndex <= totalCushionedAppearances) {
+    return ` x${cushion}`;
+  }
+  
+  return '';
+}, [salesReps]);
+
+
+
+// ⭐ NEW: Get cushion badge color for styling
+const getCushionBadgeColor = useCallback((cushion: number): string => {
+  if (cushion === 0) return '';
+  if (cushion === 1) return 'text-orange-600 font-semibold';
+  return 'text-blue-600 font-semibold';
+}, []);
+
+// ⭐ NEW: Handle opening cushion edit modal
+const handleEditCushion = useCallback((repId: string, repName: string, lane: 'sub1k' | '1kplus') => {
+  const rep = salesReps.find(r => r.id === repId);
+  if (!rep) return;
+  
+  const currentCushion = lane === 'sub1k' ? (rep.cushionSub1k ?? 0) : (rep.cushion1kPlus ?? 0);
+  
+  setEditingRep({ repId, repName, lane, currentCushion });
+  setCushionModalOpen(true);
+}, [salesReps]);
+
+
   // Generate rotation sequence (for expanded view)
   const generateRotationSequence = useCallback((
     baseOrder: string[],
@@ -428,128 +504,144 @@ useEffect(() => {
   }, [replacementMarks]);
 
   // Generate collapsed view items
-  const generateCollapsedView = useCallback((
-    baseOrder: string[],
-    hitCounts: Map<string, number>,
-    lane: 'sub1k' | '1kplus'
-  ): RotationItem[] => {
-    if (baseOrder.length === 0) return [];
+  // Replace the generateCollapsedView function in RotationPanelMK2.tsx
+
+const generateCollapsedView = useCallback((
+  baseOrder: string[],
+  hitCounts: Map<string, number>,
+  lane: 'sub1k' | '1kplus'
+): RotationItem[] => {
+  if (baseOrder.length === 0) return [];
+
+  const sequence = generateRotationSequence(baseOrder, hitCounts);
+  const seenReps = new Set<string>();
+  const items: RotationItem[] = [];
   
-    const sequence = generateRotationSequence(baseOrder, hitCounts);
-    const seenReps = new Set<string>();
-    const items: RotationItem[] = [];
-    
-    for (const seqItem of sequence) {
-      if (!seenReps.has(seqItem.repId)) {
-        seenReps.add(seqItem.repId);
-        const rep = salesReps.find(r => r.id === seqItem.repId);
-        const originalPosition = baseOrder.indexOf(seqItem.repId) + 1;
-        const hits = hitCounts.get(seqItem.repId) || 0;
-        
-        items.push({
-          repId: seqItem.repId,
-          name: rep?.name || seqItem.repId,
-          originalPosition,
-          hits,
-          nextPosition: seqItem.position,
-          isNext: seqItem.position === 1
-        });
-      }
-    }
-    
-    // Overlay replacement order
-    const replacements = getReplacementOrder(lane);
-    if (replacements.length > 0) {
-      const repWithReplacements = new Set(replacements.map(r => r.repId));
-      return items.map((item, index) => ({
-        ...item,
-        hasOpenReplacements: repWithReplacements.has(item.repId),
-        displayPosition: repWithReplacements.has(item.repId) 
-          ? replacements.findIndex(r => r.repId === item.repId) + 1
-          : item.nextPosition,
-        isNext: index === 0
-      })).sort((a, b) => {
-        const aHasRep = a.hasOpenReplacements ? 1 : 0;
-        const bHasRep = b.hasOpenReplacements ? 1 : 0;
-        if (aHasRep !== bHasRep) return bHasRep - aHasRep;
-        return (a.displayPosition || a.nextPosition) - (b.displayPosition || b.nextPosition);
-      });
-    }
-    
-    return items.sort((a, b) => a.nextPosition - b.nextPosition);
-  }, [generateRotationSequence, salesReps, getReplacementOrder]);
-  
-  // Generate expanded view items
-  const generateExpandedView = useCallback((
-    baseOrder: string[],
-    hitCounts: Map<string, number>,
-    lane: 'sub1k' | '1kplus'
-  ): { 
-    replacementQueue: RotationItem[]; 
-    currentOrder: RotationItem[]; 
-    originalOrder: RotationItem[] 
-  } => {
-    if (baseOrder.length === 0) {
-      return { replacementQueue: [], currentOrder: [], originalOrder: [] };
-    }
-  
-    // Generate replacement queue
-    const replacements = getReplacementOrder(lane);
-    const replacementQueue: RotationItem[] = replacements.map((mark, idx) => {
-      const rep = salesReps.find(r => r.id === mark.repId);
-      const originalPosition = baseOrder.indexOf(mark.repId) + 1;
-      const hits = hitCounts.get(mark.repId) || 0;
-      
-      return {
-        repId: mark.repId,
-        name: rep?.name || mark.repId,
-        originalPosition,
-        hits,
-        nextPosition: idx + 1,
-        displayPosition: idx + 1,
-        isNext: idx === 0,
-        hasOpenReplacements: true
-      };
-    });
-  
-    // Generate current order sequence
-    const sequence = generateRotationSequence(baseOrder, hitCounts);
-    const currentOrder: RotationItem[] = sequence.map((seqItem, idx) => {
+  for (const seqItem of sequence) {
+    if (!seenReps.has(seqItem.repId)) {
+      seenReps.add(seqItem.repId);
       const rep = salesReps.find(r => r.id === seqItem.repId);
       const originalPosition = baseOrder.indexOf(seqItem.repId) + 1;
       const hits = hitCounts.get(seqItem.repId) || 0;
       
-      return {
+      items.push({
         repId: seqItem.repId,
         name: rep?.name || seqItem.repId,
         originalPosition,
         hits,
         nextPosition: seqItem.position,
-        displayPosition: replacementQueue.length + idx + 1,
-        isNext: replacementQueue.length === 0 && idx === 0,
-        hasOpenReplacements: false
-      };
-    });
+        isNext: seqItem.position === 1,
+        appearanceIndex: 1 // Collapsed view shows first appearance only
+      });
+    }
+  }
   
-    // Generate original order (reference section)
-    const originalOrder: RotationItem[] = baseOrder.map((repId, idx) => {
-      const rep = salesReps.find(r => r.id === repId);
-      const hits = hitCounts.get(repId) || 0;
-      
-      return {
-        repId,
-        name: rep?.name || repId,
-        originalPosition: idx + 1,
-        hits,
-        nextPosition: -1,
-        displayPosition: replacementQueue.length + currentOrder.length + idx + 1,
-        isNext: false,
-        hasOpenReplacements: false
-      };
+  // Overlay replacement order
+  const replacements = getReplacementOrder(lane);
+  if (replacements.length > 0) {
+    const repWithReplacements = new Set(replacements.map(r => r.repId));
+    return items.map((item, index) => ({
+      ...item,
+      hasOpenReplacements: repWithReplacements.has(item.repId),
+      displayPosition: repWithReplacements.has(item.repId) 
+        ? replacements.findIndex(r => r.repId === item.repId) + 1
+        : item.nextPosition,
+      isNext: index === 0
+    })).sort((a, b) => {
+      const aHasRep = a.hasOpenReplacements ? 1 : 0;
+      const bHasRep = b.hasOpenReplacements ? 1 : 0;
+      if (aHasRep !== bHasRep) return bHasRep - aHasRep;
+      return (a.displayPosition || a.nextPosition) - (b.displayPosition || b.nextPosition);
     });
+  }
   
-    return { replacementQueue, currentOrder, originalOrder };
-  }, [generateRotationSequence, salesReps, getReplacementOrder]);
+  return items.sort((a, b) => a.nextPosition - b.nextPosition);
+}, [generateRotationSequence, salesReps, getReplacementOrder]);
+  
+  // Generate expanded view items
+  // Replace the generateExpandedView function in RotationPanelMK2.tsx
+
+const generateExpandedView = useCallback((
+  baseOrder: string[],
+  hitCounts: Map<string, number>,
+  lane: 'sub1k' | '1kplus'
+): { 
+  replacementQueue: RotationItem[]; 
+  currentOrder: RotationItem[]; 
+  originalOrder: RotationItem[] 
+} => {
+  if (baseOrder.length === 0) {
+    return { replacementQueue: [], currentOrder: [], originalOrder: [] };
+  }
+
+  // Generate replacement queue
+  const replacements = getReplacementOrder(lane);
+  const replacementQueue: RotationItem[] = replacements.map((mark, idx) => {
+    const rep = salesReps.find(r => r.id === mark.repId);
+    const originalPosition = baseOrder.indexOf(mark.repId) + 1;
+    const hits = hitCounts.get(mark.repId) || 0;
+    
+    return {
+      repId: mark.repId,
+      name: rep?.name || mark.repId,
+      originalPosition,
+      hits,
+      nextPosition: idx + 1,
+      displayPosition: idx + 1,
+      isNext: idx === 0,
+      hasOpenReplacements: true,
+      appearanceIndex: 1 // Replacements are always first appearance
+    };
+  });
+
+  // Generate current order sequence with appearance tracking
+  const sequence = generateRotationSequence(baseOrder, hitCounts);
+  
+  // Track how many times each rep has appeared
+  const appearanceCounts = new Map<string, number>();
+  
+  const currentOrder: RotationItem[] = sequence.map((seqItem, idx) => {
+    const rep = salesReps.find(r => r.id === seqItem.repId);
+    const originalPosition = baseOrder.indexOf(seqItem.repId) + 1;
+    const hits = hitCounts.get(seqItem.repId) || 0;
+    
+    // Increment appearance count for this rep
+    const currentAppearance = (appearanceCounts.get(seqItem.repId) || 0) + 1;
+    appearanceCounts.set(seqItem.repId, currentAppearance);
+    
+    return {
+      repId: seqItem.repId,
+      name: rep?.name || seqItem.repId,
+      originalPosition,
+      hits,
+      nextPosition: seqItem.position,
+      displayPosition: replacementQueue.length + idx + 1,
+      isNext: replacementQueue.length === 0 && idx === 0,
+      hasOpenReplacements: false,
+      appearanceIndex: currentAppearance // Track which appearance this is
+    };
+  });
+
+  // Generate original order (reference section)
+  const originalOrder: RotationItem[] = baseOrder.map((repId, idx) => {
+    const rep = salesReps.find(r => r.id === repId);
+    const hits = hitCounts.get(repId) || 0;
+    
+    return {
+      repId,
+      name: rep?.name || repId,
+      originalPosition: idx + 1,
+      hits,
+      nextPosition: -1,
+      displayPosition: replacementQueue.length + currentOrder.length + idx + 1,
+      isNext: false,
+      hasOpenReplacements: false,
+      appearanceIndex: undefined // Original order doesn't need appearance tracking
+    };
+  });
+
+  return { replacementQueue, currentOrder, originalOrder };
+}, [generateRotationSequence, salesReps, getReplacementOrder]);
 
   // Compute orders for sub1k
   const baseOrderSub1k = useMemo(() => getOriginalOrder('sub1k'), [getOriginalOrder]);
@@ -573,81 +665,100 @@ useEffect(() => {
     [generateExpandedView, baseOrder1kPlus, hits1kPlus]
   );
 
-  // Render functions
-  const renderRotationItem = (item: RotationItem, showHits: boolean = true) => {
-    return (
-      <div
-        key={`${item.repId}-${item.displayPosition || item.nextPosition}`}
-        className={`flex items-center justify-between py-2 px-3 rounded transition-all ${
+ // Replace the renderRotationItem function in RotationPanelMK2.tsx
+
+const renderRotationItem = (item: RotationItem, showHits: boolean = true, lane: 'sub1k' | '1kplus') => {
+  // Pass the appearance index to getCushionDisplay
+  const cushionDisplay = getCushionDisplay(item.repId, lane, item.appearanceIndex);
+  const rep = salesReps.find(r => r.id === item.repId);
+  const currentCushion = lane === 'sub1k' ? (rep?.cushionSub1k ?? 0) : (rep?.cushion1kPlus ?? 0);
+  const cushionColorClass = getCushionBadgeColor(currentCushion);
+  
+  return (
+    <div
+      key={`${item.repId}-${item.displayPosition || item.nextPosition}-${item.appearanceIndex || 0}`}
+      className={`flex items-center justify-between py-2 px-3 rounded transition-all group ${
+        item.hasOpenReplacements 
+          ? 'bg-orange-50 border border-orange-200' 
+          : item.isNext 
+            ? 'bg-blue-50 border border-blue-200 font-semibold' 
+            : 'hover:bg-gray-50'
+      }`}
+    >
+      <div className="flex items-center space-x-3 flex-1">
+        <span className={`font-medium ${
           item.hasOpenReplacements 
-            ? 'bg-orange-50 border border-orange-200' 
+            ? 'text-orange-700' 
             : item.isNext 
-              ? 'bg-blue-50 border border-blue-200 font-semibold' 
-              : 'hover:bg-gray-50'
-        }`}
-      >
-        <div className="flex items-center space-x-3">
-          <span className={`font-medium ${
-            item.hasOpenReplacements 
-              ? 'text-orange-700' 
-              : item.isNext 
-                ? 'text-blue-700' 
-                : 'text-gray-600'
-          }`}>
-            {(item.displayPosition ?? item.nextPosition)}.
-          </span>
-          <span className={`${
-            item.hasOpenReplacements 
+              ? 'text-blue-700' 
+              : 'text-gray-600'
+        }`}>
+          {(item.displayPosition ?? item.nextPosition)}.
+        </span>
+        <span className={`${
+          item.hasOpenReplacements 
+            ? 'font-semibold' 
+            : item.isNext 
               ? 'font-semibold' 
-              : item.isNext 
-                ? 'font-semibold' 
-                : ''
-          }`}>
-            {item.name}
+              : ''
+        } ${cushionColorClass}`}>
+          {item.name}{cushionDisplay}
+        </span>
+        {item.hasOpenReplacements && (
+          <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full border border-orange-300">
+            MFR
           </span>
-          {item.hasOpenReplacements && (
-            <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full border border-orange-300">
-              MFR
-            </span>
-          )}
-        </div>
+        )}
+      </div>
+      
+      <div className="flex items-center gap-2">
         {showHits && (
           <span className="text-xs text-gray-500">
             {item.hits} hit{item.hits !== 1 ? 's' : ''}
           </span>
         )}
+        
+        {/* Edit button (shows on hover) */}
+        <button
+          onClick={() => handleEditCushion(item.repId, item.name, lane)}
+          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all"
+          title="Edit cushion"
+        >
+          <Edit2 className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+  
+ const renderRotationLane = (
+  title: string,
+  collapsedItems: RotationItem[],
+  expandedData: { replacementQueue: RotationItem[]; currentOrder: RotationItem[]; originalOrder: RotationItem[] },
+  expanded: boolean,
+  onToggleExpanded: () => void,
+  lane: 'sub1k' | '1kplus'
+) => {
+  const hasReplacements = expandedData.replacementQueue.length > 0;
+
+  // For collapsed view, separate items with replacements
+  const collapsedReplacements = collapsedItems.filter(item => item.hasOpenReplacements);
+  const collapsedRegular = collapsedItems.filter(item => !item.hasOpenReplacements);
+  
+  // Check if all reps are OOO for this lane
+  const allOOO = collapsedItems.length === 0 && expandedData.currentOrder.length === 0;
+  
+  if (allOOO) {
+    return (
+      <div className="bg-gray-100 border-2 border-gray-300 rounded-lg p-6 text-center">
+        <Clock className="mx-auto mb-2 text-gray-500" size={32} />
+        <h3 className="font-semibold text-gray-700 mb-1">{title}</h3>
+        <p className="text-gray-600">We are closed</p>
       </div>
     );
-  };
+  }
   
-  const renderRotationLane = (
-    title: string,
-    collapsedItems: RotationItem[],
-    expandedData: { replacementQueue: RotationItem[]; currentOrder: RotationItem[]; originalOrder: RotationItem[] },
-    expanded: boolean,
-    onToggleExpanded: () => void,
-    lane: 'sub1k' | '1kplus'
-  ) => {
-    const hasReplacements = expandedData.replacementQueue.length > 0;
-
-     // For collapsed view, separate items with replacements
-    const collapsedReplacements = collapsedItems.filter(item => item.hasOpenReplacements);
-    const collapsedRegular = collapsedItems.filter(item => !item.hasOpenReplacements);
-    
-    // Check if all reps are OOO for this lane
-    const allOOO = collapsedItems.length === 0 && expandedData.currentOrder.length === 0;
-    
-    if (allOOO) {
-      return (
-        <div className="bg-gray-100 border-2 border-gray-300 rounded-lg p-6 text-center">
-          <Clock className="mx-auto mb-2 text-gray-500" size={32} />
-          <h3 className="font-semibold text-gray-700 mb-1">{title}</h3>
-          <p className="text-gray-600">We are closed</p>
-        </div>
-      );
-    }
-    
-     return (
+  return (
     <div className="space-y-2">
       {/* Header with expand/collapse button */}
       <div className="flex items-center justify-between">
@@ -683,7 +794,8 @@ useEffect(() => {
               REPLACEMENT ORDER
             </div>
             <div className="space-y-1">
-              {expandedData.replacementQueue.map(item => renderRotationItem(item, false))}
+              {/* FIXED: Use the lane parameter passed to the function */}
+              {expandedData.replacementQueue.map(item => renderRotationItem(item, true, lane))}
             </div>
           </div>
         </div>
@@ -697,7 +809,8 @@ useEffect(() => {
               REPLACEMENT ORDER
             </div>
             <div className="space-y-1">
-              {collapsedReplacements.map(item => renderRotationItem(item, true))}
+              {/* FIXED: Use the lane parameter passed to the function */}
+              {collapsedReplacements.map(item => renderRotationItem(item, true, lane))}
             </div>
           </div>
         </div>
@@ -713,7 +826,8 @@ useEffect(() => {
                 CURRENT ORDER
               </div>
               <div className="space-y-1">
-                {expandedData.currentOrder.map(item => renderRotationItem(item, true))}
+                {/* FIXED: Use the lane parameter passed to the function */}
+                {expandedData.currentOrder.map(item => renderRotationItem(item, true, lane))}
               </div>
             </div>
             
@@ -723,7 +837,8 @@ useEffect(() => {
                 ORIGINAL ORDER
               </div>
               <div className="space-y-1">
-                {expandedData.originalOrder.map(item => renderRotationItem(item, false))}
+                {/* FIXED: Use the lane parameter passed to the function */}
+                {expandedData.originalOrder.map(item => renderRotationItem(item, true, lane))}
               </div>
             </div>
           </>
@@ -733,7 +848,8 @@ useEffect(() => {
               CURRENT ORDER
             </div>
             <div className="space-y-1">
-              {collapsedRegular.map(item => renderRotationItem(item, true))}
+              {/* FIXED: Use the lane parameter passed to the function */}
+              {collapsedRegular.map(item => renderRotationItem(item, true, lane))}
             </div>
           </div>
         )}
@@ -767,31 +883,56 @@ useEffect(() => {
       </div>
   
       {/* Sub 1k Rotation */}
-      <div className="space-y-2">
-        <h4 className="text-md font-semibold text-gray-800">Sub 1K Rotation</h4>
-        {renderRotationLane(
-          'Current Order',
-          sub1kCollapsed,
-          sub1kExpanded,
-          expandedSub1k,
-          () => setExpandedSub1k(!expandedSub1k),
-          'sub1k'
-        )}
-      </div>
+<div className="space-y-2">
+  <h4 className="text-md font-semibold text-gray-800">Sub 1K Rotation</h4>
+  {/* ADD THIS: Cushion tracking display */}
+  <CushionTrackingDisplay lane="sub1k" />
   
+  {renderRotationLane(
+    'Current Order',
+    sub1kCollapsed,
+    sub1kExpanded,
+    expandedSub1k,
+    () => setExpandedSub1k(!expandedSub1k),
+    'sub1k'
+  )}
+</div>
+
+
       {/* 1k+ Rotation */}
-      <div className="space-y-2">
-        <h4 className="text-md font-semibold text-gray-800">1K+ Rotation</h4>
-        {renderRotationLane(
-          'Current Order',
-          over1kCollapsed,
-          over1kExpanded,
-          expanded1kPlus,
-          () => setExpanded1kPlus(!expanded1kPlus),
-          '1kplus'
-        )}
+<div className="space-y-2">
+  <h4 className="text-md font-semibold text-gray-800">1K+ Rotation</h4>
+  {/* ADD THIS: Cushion tracking display */}
+  <CushionTrackingDisplay lane="1kplus" />
+  
+  {renderRotationLane(
+    'Current Order',
+    over1kCollapsed,
+    over1kExpanded,
+    expanded1kPlus,
+    () => setExpanded1kPlus(!expanded1kPlus),
+    '1kplus'
+  )}
+
       </div>
+      {cushionModalOpen && editingRep && (
+      <CushionEditModal
+        isOpen={cushionModalOpen}
+        onClose={() => {
+          setCushionModalOpen(false);
+          setEditingRep(null);
+        }}
+        repId={editingRep.repId}
+        repName={editingRep.repName}
+        lane={editingRep.lane}
+        currentCushion={editingRep.currentCushion}
+        onSuccess={() => {
+          loadHitCounts(); // Refresh the display
+        }}
+      />
+    )}
     </div>
+    
   );
 };
 

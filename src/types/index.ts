@@ -10,6 +10,10 @@ export interface SalesRep {
   sub1kOrder: number;
   over1kOrder?: number; // Optional for reps who can't handle 1K+
   status: 'active' | 'ooo';
+   cushionSub1k?: number;
+  cushion1kPlus?: number;
+  cushionSub1kOccurrences?: number; // How many times sub1k cushion should repeat
+  cushion1kPlusOccurrences?: number; // How many times 1k+ cushion should repeat
 }
 
 // Add this to your existing types.ts file

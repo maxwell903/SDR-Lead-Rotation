@@ -5,6 +5,7 @@ import { createHitCount } from './hitCountsService'
 import type { Lead, LeadEntry } from '../types'
 import { ReplacementState } from '../features/leadReplacement'
 import { logAuditAction, getRepHitTotal } from './auditLogger';
+import { checkAndDecrementCushion } from './cushionService';
 
 // DB row shape (snake_case from your schema)
 type DBLeadRow = {
@@ -90,58 +91,59 @@ export async function createLead(
   // Determine lane from unit count
   const lane: 'sub1k' | '1kplus' = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
 
-  const { day, month, year } = getDateComponents(created.date);
-  
-  // ✅ STEP 1: Get current total BEFORE creating hit count
-  let totalBeforeAction = 0;
-  try {
-    const { getRepHitTotal } = await import('./auditLogger');
-    totalBeforeAction = await getRepHitTotal(
-      created.assignedTo,
-      lane,
-      created.month,
-      created.year
-    );
-  } catch (err) {
-    console.error('Failed to get current hit total:', err);
-  }
-  
-  // ✅ STEP 2: Store hit count for normal lead (NL = +1)
-  try {
+  // ⭐ NEW: Check cushion before creating hit count
+  const { shouldRecordHit, newCushionValue } = await checkAndDecrementCushion(
+    created.assignedTo,
+    lane
+  );
+
+  console.log(`🎯 Lead assignment - Rep: ${created.assignedTo}, Lane: ${lane}, Cushion: ${newCushionValue}, Record Hit: ${shouldRecordHit}`);
+
+  // Only create hit count if cushion allows it
+  if (shouldRecordHit) {
+    // Get total BEFORE creating the hit
+    const totalBefore = await getRepHitTotal(created.assignedTo, lane, created.month, created.year);
+    
     await createHitCount({
       repId: created.assignedTo,
+      leadEntryId: undefined, // Will be set when lead entry is created
       hitType: 'NL',
       hitValue: 1,
       lane,
       month: created.month,
-      year: created.year
+      year: created.year,
     });
-  } catch (hitError) {
-    console.error('Failed to store hit count for new lead:', hitError);
-  }
-  
-  // ✅ STEP 3: Log to audit trail with BEFORE value
-  try {
-    const { logAuditAction } = await import('./auditLogger');
 
+    // Log audit action
     await logAuditAction({
-      actionSubtype: 'ADD_NL',
+  actionSubtype: 'ADD_NL',  // ✅ Correct - use actionSubtype with proper value
+  tableName: 'leads',  // ✅ Add required tableName
+  recordId: created.id,  // ✅ Add required recordId
+  affectedRepId: created.assignedTo,  // ✅ Change repId to affectedRepId
+  accountNumber: created.accountNumber,
+  lane,
+  hitValueChange: 1,
+  hitValueTotal: totalBefore + 1,
+  actionDay: created.date.getDate(),  // ✅ Change day to actionDay
+  actionMonth: created.month,  // ✅ Change month to actionMonth
+  actionYear: created.year,  // ✅ Change year to actionYear
+});
+  } else {
+    // Log that lead was assigned but no hit recorded due to cushion
+    await logAction({
+      actionType: 'CREATE',
       tableName: 'leads',
       recordId: created.id,
-      affectedRepId: created.assignedTo,
-      accountNumber: created.accountNumber,
-      hitValueChange: 1,
-      hitValueTotal: totalBeforeAction,  // ✅ Pass the BEFORE value
-      lane: lane,
-      actionDay: day,      
-      actionMonth: month,  
-      actionYear: year     
+      newData: {
+        assigned_to: created.assignedTo,
+        cushion_absorbed: true,
+        cushion_remaining: newCushionValue,
+        lane
+      }
     });
-  } catch (auditError) {
-    console.error('Failed to log lead creation:', auditError);
   }
-  
-  return created
+
+  return created;
 }
 
 /** CREATE LRL lead with replacement relationship */
