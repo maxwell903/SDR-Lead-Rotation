@@ -228,7 +228,7 @@ export async function createLeadWithReplacement(
         recordId: created.id,
         affectedRepId: repId,
         accountNumber: created.accountNumber,
-        hitValueChange: 0,  // LRL adds 0 hits
+        hitValueChange: 1,  // LRL adds 0 hits
         hitValueTotal: totalBeforeAction,  
         lane: replacementLane,
         actionDay: day,      
@@ -719,7 +719,7 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
           recordId: leadId,
           affectedRepId: repId,
           accountNumber: accountNumber,
-          hitValueChange: 0,
+          hitValueChange: -1,
           hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
           lane: lane,
           actionDay: day,          // ✅ ADD
