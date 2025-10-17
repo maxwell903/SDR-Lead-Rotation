@@ -67,45 +67,46 @@ const CushionEditModal: React.FC<CushionEditModalProps> = ({
   }, [isOpen]);
 
   const handleSave = async () => {
-    if (!repId) return;
+  if (!repId) return;
 
-    // Validation
-    if (cushionValue < 0 || cushionValue > 10) {
-      setError('Cushion value must be between 0 and 10');
-      return;
-    }
+  // Validation
+  if (cushionValue < 0 || cushionValue > 10) {
+    setError('Cushion value must be between 0 and 10');
+    return;
+  }
 
-    if (cushionValue > 0 && (totalAppearances < 1 || totalAppearances > 50)) {
-      setError('Total appearances must be between 1 and 50');
-      return;
-    }
+  if (cushionValue > 0 && (totalAppearances < 0 || totalAppearances > 50)) {
+    setError('Total appearances must be between 1 and 50');
+    return;
+  }
 
-    setIsSaving(true);
-    setError(null);
+  setIsSaving(true);
+  setError(null);
 
-    try {
-      // When cushion is 0, we don't need occurrences
-      const occurrencesToSave = cushionValue === 0 ? 0 : totalAppearances;
-      
-      // Use setCushionValue from cushionService
-      await setCushionValue(
-        repId,
-        lane,
-        cushionValue,
-        occurrencesToSave
-      );
+  try {
+    // When cushion is 0, we don't need occurrences
+    const occurrencesToSave = cushionValue === 0 ? 0 : totalAppearances;
+    
+    // ⭐ UPDATE THIS: Pass originalValue parameter
+    await setCushionValue(
+      repId,
+      lane,
+      cushionValue,
+      occurrencesToSave,
+      cushionValue  // ⭐ NEW: Save as original cushion value
+    );
 
-      console.log(`✅ Saved cushion for ${repName}: x${cushionValue} appearing ${occurrencesToSave} times`);
-      
-      onSuccess();
-      onClose();
-    } catch (err) {
-      console.error('Failed to save cushion:', err);
-      setError('Failed to save cushion settings. Please try again.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
+    console.log(`✅ Saved cushion for ${repName}: x${cushionValue} appearing ${occurrencesToSave} times`);
+    
+    onSuccess();
+    onClose();
+  } catch (err) {
+    console.error('Failed to save cushion:', err);
+    setError('Failed to save cushion settings. Please try again.');
+  } finally {
+    setIsSaving(false);
+  }
+};
 
   const handleCushionChange = (value: number) => {
     setCushionValueLocal(value);
@@ -218,16 +219,16 @@ const CushionEditModal: React.FC<CushionEditModalProps> = ({
                 </div>
                 <input
                   type="number"
-                  min="1"
+                  min="0"
                   max="50"
                   value={totalAppearances}
-                  onChange={(e) => setTotalAppearances(Math.max(1, parseInt(e.target.value) || 1))}
+                  onChange={(e) => setTotalAppearances(Math.max(0, parseInt(e.target.value) || 0))}
                   className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                     cushionValue === 0 
                       ? 'bg-gray-50 border-gray-200 cursor-not-allowed' 
                       : 'border-gray-300'
                   }`}
-                  disabled={cushionValue === 0}
+                  
                 />
                 <p className="text-xs text-gray-500">
                   {cushionValue === 0 
@@ -288,7 +289,7 @@ const CushionEditModal: React.FC<CushionEditModalProps> = ({
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={isSaving || (cushionValue > 0 && totalAppearances < 1)}
+                  disabled={isSaving || (cushionValue > 0 && totalAppearances < 0)}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                 >
                   {isSaving ? (

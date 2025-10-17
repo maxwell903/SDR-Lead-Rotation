@@ -34,6 +34,8 @@ type DBSalesRepRow = {
   cushion_1kplus: number | null
   cushion_sub1k_occurrences: number | null
   cushion_1kplus_occurrences: number | null
+   cushion_sub1k_original: number | null
+  cushion_1kplus_original: number | null
 }
 
 const rowToRep = (r: DBSalesRepRow): SalesRep => ({
@@ -48,6 +50,8 @@ const rowToRep = (r: DBSalesRepRow): SalesRep => ({
   cushion1kPlus: r.cushion_1kplus ?? 0,
   cushionSub1kOccurrences: r.cushion_sub1k_occurrences ?? 0,
   cushion1kPlusOccurrences: r.cushion_1kplus_occurrences ?? 0,
+   cushionSub1kOriginal: r.cushion_sub1k_original ?? 0,
+  cushion1kPlusOriginal: r.cushion_1kplus_original ?? 0,
 })
 
 const repToRow = (rep: SalesRep): Partial<DBSalesRepRow> => ({

@@ -8,6 +8,7 @@ import { subscribeCushionChanges } from '../services/cushionService';
 import CushionTrackingDisplay from './CushionTrackingDisplay';
 
 
+
 interface ReplacementLead {
   id: string;
   repId: string;
@@ -426,7 +427,7 @@ const getCushionDisplay = useCallback((
   const totalCushionedAppearances = occurrences;
   
   // Only show cushion if this appearance is within the cushioned range
-  if (appearanceIndex <= totalCushionedAppearances) {
+  if (appearanceIndex < totalCushionedAppearances) {
     return ` x${cushion}`;
   }
   
@@ -559,7 +560,32 @@ const generateCollapsedView = useCallback((
 }, [generateRotationSequence, salesReps, getReplacementOrder]);
   
   // Generate expanded view items
-  // Replace the generateExpandedView function in RotationPanelMK2.tsx
+
+// Add this function to RotationPanelMK2.tsx after the getReplacementOrder function
+
+// Get open replacement order (FIFO by timestamp) - returns array of repIds
+const getOpenRepOrder = useCallback((lane: 'sub1k' | '1kplus'): string[] => {
+  try {
+    // Get replacement marks for this lane
+    const laneReplacements = replacementMarks
+      .filter(mark => mark.lane === lane)
+      .sort((a, b) => a.markedAt.getTime() - b.markedAt.getTime());
+    
+    // Extract repIds in FIFO order
+    const repOrder: string[] = [];
+    for (const mark of laneReplacements) {
+      if (mark.repId) {
+        repOrder.push(mark.repId);
+      }
+    }
+    
+    return repOrder;
+  } catch (error) {
+    console.error('Error getting open rep order:', error);
+    return [];
+  }
+}, [replacementMarks]);
+
 
 const generateExpandedView = useCallback((
   baseOrder: string[],
@@ -574,40 +600,48 @@ const generateExpandedView = useCallback((
     return { replacementQueue: [], currentOrder: [], originalOrder: [] };
   }
 
-  // Generate replacement queue
-  const replacements = getReplacementOrder(lane);
-  const replacementQueue: RotationItem[] = replacements.map((mark, idx) => {
-    const rep = salesReps.find(r => r.id === mark.repId);
-    const originalPosition = baseOrder.indexOf(mark.repId) + 1;
-    const hits = hitCounts.get(mark.repId) || 0;
+  // Track appearance count for each rep
+  const appearanceCount = new Map<string, number>();
+
+  // Add this function to RotationPanelMK2.tsx after the getReplacementOrder function
+
+// Get open replacement order (FIFO by timestamp) - returns array of repIds
+
+
+  // Get replacement queue (FIFO order)
+  const openOrder = getOpenRepOrder(lane);
+  const replacementQueue: RotationItem[] = openOrder.map((repId: string, idx: number) => {
+    const rep = salesReps.find(r => r.id === repId);
+    const originalPosition = baseOrder.indexOf(repId) + 1;
+    const hits = hitCounts.get(repId) || 0;
+    
+    // Increment appearance count for this rep
+    const currentAppearance = (appearanceCount.get(repId) || 0) + 1;
+    appearanceCount.set(repId, currentAppearance);
     
     return {
-      repId: mark.repId,
-      name: rep?.name || mark.repId,
+      repId,
+      name: rep?.name || repId,
       originalPosition,
       hits,
       nextPosition: idx + 1,
       displayPosition: idx + 1,
       isNext: idx === 0,
       hasOpenReplacements: true,
-      appearanceIndex: 1 // Replacements are always first appearance
+      appearanceIndex: currentAppearance // Add appearance index
     };
   });
 
-  // Generate current order sequence with appearance tracking
+  // Generate current order sequence
   const sequence = generateRotationSequence(baseOrder, hitCounts);
-  
-  // Track how many times each rep has appeared
-  const appearanceCounts = new Map<string, number>();
-  
   const currentOrder: RotationItem[] = sequence.map((seqItem, idx) => {
     const rep = salesReps.find(r => r.id === seqItem.repId);
     const originalPosition = baseOrder.indexOf(seqItem.repId) + 1;
     const hits = hitCounts.get(seqItem.repId) || 0;
     
     // Increment appearance count for this rep
-    const currentAppearance = (appearanceCounts.get(seqItem.repId) || 0) + 1;
-    appearanceCounts.set(seqItem.repId, currentAppearance);
+    const currentAppearance = (appearanceCount.get(seqItem.repId) || 0) + 1;
+    appearanceCount.set(seqItem.repId, currentAppearance);
     
     return {
       repId: seqItem.repId,
@@ -618,11 +652,11 @@ const generateExpandedView = useCallback((
       displayPosition: replacementQueue.length + idx + 1,
       isNext: replacementQueue.length === 0 && idx === 0,
       hasOpenReplacements: false,
-      appearanceIndex: currentAppearance // Track which appearance this is
+      appearanceIndex: currentAppearance // Add appearance index
     };
   });
 
-  // Generate original order (reference section)
+  // Generate original order (reference section) - no appearance tracking needed
   const originalOrder: RotationItem[] = baseOrder.map((repId, idx) => {
     const rep = salesReps.find(r => r.id === repId);
     const hits = hitCounts.get(repId) || 0;
@@ -635,13 +669,13 @@ const generateExpandedView = useCallback((
       nextPosition: -1,
       displayPosition: replacementQueue.length + currentOrder.length + idx + 1,
       isNext: false,
-      hasOpenReplacements: false,
-      appearanceIndex: undefined // Original order doesn't need appearance tracking
+      hasOpenReplacements: false
+      // No appearanceIndex for original order
     };
   });
 
   return { replacementQueue, currentOrder, originalOrder };
-}, [generateRotationSequence, salesReps, getReplacementOrder]);
+ }, [generateRotationSequence, salesReps, getOpenRepOrder]); // Make sure getOpenRepOrder is in the dependencies
 
   // Compute orders for sub1k
   const baseOrderSub1k = useMemo(() => getOriginalOrder('sub1k'), [getOriginalOrder]);
@@ -667,23 +701,60 @@ const generateExpandedView = useCallback((
 
  // Replace the renderRotationItem function in RotationPanelMK2.tsx
 
-const renderRotationItem = (item: RotationItem, showHits: boolean = true, lane: 'sub1k' | '1kplus') => {
-  // Pass the appearance index to getCushionDisplay
-  const cushionDisplay = getCushionDisplay(item.repId, lane, item.appearanceIndex);
+// In RotationPanelMK2.tsx, update the renderRotationItem function:
+
+const renderRotationItem = (
+  item: RotationItem, 
+  showHits: boolean, 
+  lane: 'sub1k' | '1kplus'
+) => {
   const rep = salesReps.find(r => r.id === item.repId);
-  const currentCushion = lane === 'sub1k' ? (rep?.cushionSub1k ?? 0) : (rep?.cushion1kPlus ?? 0);
-  const cushionColorClass = getCushionBadgeColor(currentCushion);
+  const cushion = lane === 'sub1k' ? (rep?.cushionSub1k ?? 0) : (rep?.cushion1kPlus ?? 0);
+  const occurrences = lane === 'sub1k' ? (rep?.cushionSub1kOccurrences ?? 0) : (rep?.cushion1kPlusOccurrences ?? 0);
   
+  // Calculate if this specific appearance should show cushion
+  const showCushionBadge = () => {
+    if (cushion === 0) return '';
+    
+    // For collapsed view or when appearanceIndex not provided, show current cushion
+    if (item.appearanceIndex === undefined) {
+      return cushion > 0 ? ` x${cushion}` : '';
+    }
+    
+    // For expanded view: only show cushion on first appearances
+    // If cushion > 0, that's 1 appearance, plus any occurrences
+    const totalCushionedAppearances = occurrences;
+    
+    if (item.appearanceIndex <= totalCushionedAppearances) {
+      // For the VERY FIRST appearance when cushion is active, show current cushion value
+      if (item.appearanceIndex === 1 && cushion > 0) {
+        return ` x${cushion}`;
+      }
+      // For subsequent cushioned appearances (from occurrences), always show x2
+      if (item.appearanceIndex > 1 && item.appearanceIndex <= totalCushionedAppearances) {
+        return ` x2`;
+      }
+    }
+    
+    return '';
+  };
+
+  const cushionBadge = showCushionBadge();
+  const cushionValue = cushionBadge ? parseInt(cushionBadge.replace(' x', '')) : 0;
+
   return (
     <div
-      key={`${item.repId}-${item.displayPosition || item.nextPosition}-${item.appearanceIndex || 0}`}
-      className={`flex items-center justify-between py-2 px-3 rounded transition-all group ${
+      key={`${item.repId}-${item.displayPosition || item.nextPosition}`}
+      className={`flex items-center justify-between px-3 py-2 rounded-lg transition-all duration-200 ${
         item.hasOpenReplacements 
-          ? 'bg-orange-50 border border-orange-200' 
+          ? 'bg-orange-50 border border-orange-300' 
           : item.isNext 
-            ? 'bg-blue-50 border border-blue-200 font-semibold' 
-            : 'hover:bg-gray-50'
+            ? 'bg-green-50 border border-green-300' 
+            : 'bg-white border border-gray-200'
       }`}
+      style={{
+        transform: item.isNext && !item.hasOpenReplacements ? 'translateX(4px)' : 'translateX(0)',
+      }}
     >
       <div className="flex items-center space-x-3 flex-1">
         <span className={`font-medium ${
@@ -701,30 +772,38 @@ const renderRotationItem = (item: RotationItem, showHits: boolean = true, lane: 
             : item.isNext 
               ? 'font-semibold' 
               : ''
-        } ${cushionColorClass}`}>
-          {item.name}{cushionDisplay}
+        }`}>
+          {item.name}
+          {cushionBadge && (
+            <span className={`ml-1 ${
+              cushionValue === 1 ? 'text-orange-600 font-semibold' : 'text-blue-600 font-semibold'
+            }`}>
+              {cushionBadge}
+            </span>
+          )}
         </span>
         {item.hasOpenReplacements && (
           <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full border border-orange-300">
-            MFR
+            Needs Replacement
           </span>
         )}
       </div>
-      
       <div className="flex items-center gap-2">
         {showHits && (
           <span className="text-xs text-gray-500">
             {item.hits} hit{item.hits !== 1 ? 's' : ''}
           </span>
         )}
-        
-        {/* Edit button (shows on hover) */}
+        {/* Add Edit Button */}
         <button
-          onClick={() => handleEditCushion(item.repId, item.name, lane)}
-          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all"
-          title="Edit cushion"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleEditCushion(item.repId, item.name, lane);
+          }}
+          className="p-1 hover:bg-gray-100 rounded transition-colors group"
+          title="Edit cushion settings"
         >
-          <Edit2 className="w-4 h-4" />
+          <Edit2 className="w-3 h-3 text-gray-400 group-hover:text-gray-600" />
         </button>
       </div>
     </div>

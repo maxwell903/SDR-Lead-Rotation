@@ -14,6 +14,8 @@ export interface SalesRep {
   cushion1kPlus?: number;
   cushionSub1kOccurrences?: number; // How many times sub1k cushion should repeat
   cushion1kPlusOccurrences?: number; // How many times 1k+ cushion should repeat
+  cushionSub1kOriginal: number;
+  cushion1kPlusOriginal: number;
 }
 
 // Add this to your existing types.ts file
