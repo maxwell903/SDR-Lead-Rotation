@@ -323,17 +323,55 @@ const getEntriesForCell = (day: number, repId: string, rotationContext: 'sub1k' 
   };
 
  // NEW: replace default style when an entry participates in replacement flow
-  const getEntryVisualClasses = (entry: LeadEntry): string => {
-    if (entry.type === 'lead' && entry.leadId) {
-      const visual = getCalendarEntryVisual(entry, replacementState);
-      if (visual.isOriginalMarkedOpen)   return "bg-orange-100 border-orange-300 text-orange-800 hover:bg-orange-200 transition-all duration-200";
-      if (visual.isOriginalMarkedClosed) return "bg-gray-100 border-gray-300 text-gray-600 text-xs opacity-75 scale-90 hover:opacity-90 transition-all duration-200";
-      if (visual.isReplacementLead)      return "bg-emerald-100 border-emerald-300 text-emerald-800 ring-1 ring-emerald-200 font-medium hover:bg-emerald-200 transition-all duration-200";
-      return "bg-white border-gray-200 text-gray-900 hover:bg-gray-50 transition-colors duration-200";
+  // REPLACE WITH this updated function:
+const getEntryVisualClasses = (entry: LeadEntry): string => {
+  if (entry.type === 'lead' && entry.leadId) {
+    const visual = getCalendarEntryVisual(entry, replacementState);
+    
+    // Special colors for replacement flow
+    if (visual.isOriginalMarkedOpen)   return "bg-orange-100 border-orange-300 text-orange-800 hover:bg-orange-200 transition-all duration-200";
+    if (visual.isOriginalMarkedClosed) return "bg-gray-100 border-gray-300 text-gray-600 text-xs opacity-75 scale-90 hover:opacity-90 transition-all duration-200";
+    if (visual.isReplacementLead)      return "bg-emerald-100 border-emerald-300 text-emerald-800 ring-1 ring-emerald-200 font-medium hover:bg-emerald-200 transition-all duration-200";
+    
+    // Regular leads (not in replacement flow)
+    // Check if this was a cushion lead (didn't count as a hit)
+    const lead = getLeadForEntry(entry);
+    if (lead?.wasCushionLead) {
+      // Cushion leads (didn't count as hit) - light blue
+      return "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors duration-200";
     }
-    // Skip / ooo / next default
-    return "bg-blue-50 border-blue-200 text-blue-800";
-  };
+    
+    // Regular leads that counted as a hit - white
+    return "bg-white border-gray-200 text-gray-900 hover:bg-gray-50 transition-colors duration-200";
+  }
+  
+  // Skip entries - yellow tint
+  if (entry.type === 'skip') {
+    return "bg-yellow-50 border-yellow-200 text-yellow-700 hover:bg-yellow-100 transition-colors duration-200";
+  }
+  
+  // OOO entries - red tint
+  if (entry.type === 'ooo') {
+    return "bg-red-50 border-red-200 text-red-700 hover:bg-red-100 transition-colors duration-200";
+  }
+  
+  // Next entries - keep green
+  if (entry.type === 'next') {
+    return "bg-green-50 border-green-200 text-green-700 hover:bg-green-100 transition-colors duration-200";
+  }
+  
+  // Default fallback
+  return "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors duration-200";
+};
+
+// STEP 2: Update renderEntryContent to keep the AccountNumberLink component
+// FIND the renderEntryContent function and ensure it has the AccountNumberLink helper:
+
+
+
+
+
+
 
 
   
