@@ -22,8 +22,10 @@ type DBLeadRow = {
   created_by: string | null
   created_at: string | null
   updated_at: string | null
+  was_cushion_lead: boolean | null  
 }
 
+// Convert DB row to frontend Lead type
 // Convert DB row to frontend Lead type
 const rowToLead = (r: DBLeadRow): Lead => ({
   id: r.id,
@@ -36,6 +38,7 @@ const rowToLead = (r: DBLeadRow): Lead => ({
   comments: r.comments ?? [],
   month: r.month ?? new Date().getMonth() + 1,
   year: r.year ?? new Date().getFullYear(),
+  wasCushionLead: r.was_cushion_lead ?? false,  // ✅ ADD THIS
 })
 
 // Convert frontend Lead to DB row
@@ -50,7 +53,55 @@ const leadToRow = (lead: Lead): Partial<DBLeadRow> => ({
   comments: lead.comments,
   month: lead.month,
   year: lead.year,
+  was_cushion_lead: lead.wasCushionLead ?? false,  // ✅ ADD THIS
 })
+
+/**
+ * Check if a lead was originally absorbed by cushion
+ * Now we simply read it from the lead's wasCushionLead field
+ */
+/**
+ * Check if a lead was originally absorbed by cushion
+ * BACKWARDS COMPATIBLE: Checks the database column first, then falls back to actions table
+ */
+async function wasCushionLead(leadId: string): Promise<boolean> {
+  // First, try to read from the new column
+  const { data, error } = await supabase
+    .from('leads')
+    .select('was_cushion_lead')
+    .eq('id', leadId)
+    .single();
+  
+  if (error || !data) {
+    console.error('Error checking cushion status:', error);
+    return false;
+  }
+  
+  // If the column is explicitly set (true or false), use it
+  if (data.was_cushion_lead !== null && data.was_cushion_lead !== undefined) {
+    console.log(`Lead ${leadId} cushion status from DB: ${data.was_cushion_lead}`);
+    return data.was_cushion_lead;
+  }
+  
+  // FALLBACK: For old leads without the column set, check actions table
+  console.log(`Lead ${leadId} has no cushion column set, checking actions table...`);
+  
+  const { data: action } = await supabase
+    .from('actions')
+    .select('new_data')
+    .eq('table_name', 'leads')
+    .eq('record_id', leadId)
+    .eq('action_type', 'CREATE')
+    .maybeSingle();
+  
+  if (action?.new_data?.cushion_absorbed) {
+    console.log(`Lead ${leadId} was a CUSHION lead (from actions table)`);
+    return true;
+  }
+  
+  console.log(`Lead ${leadId} was a NORMAL lead (default assumption)`);
+  return false;
+}
 
 /** READ all leads */
 export async function listLeads(): Promise<Lead[]> {
@@ -78,6 +129,20 @@ export async function createLead(
   const id = input.id ?? `lead_${Date.now()}`
   const newLead: Lead = { ...input, id }
   
+  // Determine lane from unit count
+  const lane: 'sub1k' | '1kplus' = (newLead.unitCount >= 1000) ? '1kplus' : 'sub1k';
+
+  // ⭐ Check cushion before creating hit count
+  const { shouldRecordHit, newCushionValue } = await checkAndDecrementCushion(
+    newLead.assignedTo,
+    lane
+  );
+
+  console.log(`🎯 Lead assignment - Rep: ${newLead.assignedTo}, Lane: ${lane}, Cushion: ${newCushionValue}, Record Hit: ${shouldRecordHit}`);
+
+  // ✅ Store cushion status in the lead itself
+  newLead.wasCushionLead = !shouldRecordHit;
+  
   const { data, error } = await supabase
     .from('leads')
     .insert(leadToRow(newLead))
@@ -87,17 +152,6 @@ export async function createLead(
   if (error) throw error
   
   const created = rowToLead(data as DBLeadRow)
-  
-  // Determine lane from unit count
-  const lane: 'sub1k' | '1kplus' = (created.unitCount >= 1000) ? '1kplus' : 'sub1k';
-
-  // ⭐ NEW: Check cushion before creating hit count
-  const { shouldRecordHit, newCushionValue } = await checkAndDecrementCushion(
-    created.assignedTo,
-    lane
-  );
-
-  console.log(`🎯 Lead assignment - Rep: ${created.assignedTo}, Lane: ${lane}, Cushion: ${newCushionValue}, Record Hit: ${shouldRecordHit}`);
 
   // Only create hit count if cushion allows it
   if (shouldRecordHit) {
@@ -106,7 +160,7 @@ export async function createLead(
     
     await createHitCount({
       repId: created.assignedTo,
-      leadEntryId: undefined, // Will be set when lead entry is created
+      leadEntryId: undefined,
       hitType: 'NL',
       hitValue: 1,
       lane,
@@ -114,20 +168,19 @@ export async function createLead(
       year: created.year,
     });
 
-    // Log audit action
     await logAuditAction({
-  actionSubtype: 'ADD_NL',  // ✅ Correct - use actionSubtype with proper value
-  tableName: 'leads',  // ✅ Add required tableName
-  recordId: created.id,  // ✅ Add required recordId
-  affectedRepId: created.assignedTo,  // ✅ Change repId to affectedRepId
-  accountNumber: created.accountNumber,
-  lane,
-  hitValueChange: 1,
-  hitValueTotal: totalBefore + 1,
-  actionDay: created.date.getDate(),  // ✅ Change day to actionDay
-  actionMonth: created.month,  // ✅ Change month to actionMonth
-  actionYear: created.year,  // ✅ Change year to actionYear
-});
+      actionSubtype: 'ADD_NL',
+      tableName: 'leads',
+      recordId: created.id,
+      affectedRepId: created.assignedTo,
+      accountNumber: created.accountNumber,
+      lane,
+      hitValueChange: 1,
+      hitValueTotal: totalBefore + 1,
+      actionDay: created.date.getDate(),
+      actionMonth: created.month,
+      actionYear: created.year,
+    });
   } else {
     // Log that lead was assigned but no hit recorded due to cushion
     await logAction({
@@ -667,124 +720,168 @@ export async function deleteLeadWithReplacementHandling(leadId: string): Promise
     if (deleteError) throw deleteError;
 
     // Step 5: Create compensating hit and log to audit
+      // Step 5: Create compensating hit and log to audit
+try {
+  const now = new Date();
+  const old = oldData as any;
+  const repId = (old?.assigned_to ?? '') as string;
+  const units = (old?.unit_count ?? 0) as number;
+  const lane: 'sub1k' | '1kplus' = units >= 1000 ? '1kplus' : 'sub1k';
+  const accountNumber = old?.account_number ?? '';
+
+  // Determine the lead type from the data we fetched earlier
+  const isMFR = hasReplacementData && !hasReplacementData.replaced_by_lead_id;
+  const isLRL = isReplacementData;
+  
+  const leadDate = old?.date ? new Date(old.date) : new Date();
+  const day = leadDate.getDate();
+  const leadMonth = leadDate.getMonth() + 1;
+  const leadYear = leadDate.getFullYear();
+  
+  const isCushionLead = old?.was_cushion_lead ?? false;
+  
+  // ✅ Get total BEFORE creating compensating hit (only if not cushion)
+  let totalBeforeAction = 0;
+  if (!isCushionLead) {
     try {
-      const now = new Date();
-      const old = oldData as any;
-      const repId = (old?.assigned_to ?? '') as string;
-      const units = (old?.unit_count ?? 0) as number;
-      const lane: 'sub1k' | '1kplus' = units >= 1000 ? '1kplus' : 'sub1k';
-      const accountNumber = old?.account_number ?? '';
-
-      // Determine the lead type from the data we fetched earlier
-      const isMFR = hasReplacementData && !hasReplacementData.replaced_by_lead_id;
-      const isLRL = isReplacementData;
-      
-      // ✅ Get total BEFORE creating compensating hit
-      let totalBeforeAction = 0;
-      try {
-        const { getRepHitTotal } = await import('./auditLogger');
-        totalBeforeAction = await getRepHitTotal(
-          repId,
-          lane,
-          now.getMonth() + 1,
-          now.getFullYear()
-        );
-      } catch (err) {
-        console.error('Failed to get current hit total:', err);
-      }
-
-      const leadDate = old?.date ? new Date(old.date) : new Date();
-      const day = leadDate.getDate();
-      const leadMonth = leadDate.getMonth() + 1;
-      const leadYear = leadDate.getFullYear();
-      
-      // Create compensating hit count and log to audit
-      if (isLRL) {
-        console.log('Deleting LRL lead - recording LRL 0 (no rotation impact)');
-        await createHitCount({
-          repId,
-          hitType: 'LRL',
-          hitValue: -1,
-          lane,
-          month: now.getMonth() + 1,
-          year: now.getFullYear(),
-          
-        });
-        
-        // ✅ Log DELETE_LRL to audit
-        const { logAuditAction } = await import('./auditLogger');
-        await logAuditAction({
-          actionSubtype: 'DELETE_LRL',
-          tableName: 'leads',
-          recordId: leadId,
-          affectedRepId: repId,
-          accountNumber: accountNumber,
-          hitValueChange: -1,
-          hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
-          lane: lane,
-          actionDay: day,          // ✅ ADD
-          actionMonth: leadMonth,  // ✅ ADD
-          actionYear: leadYear     // ✅ ADD
-          
-        });
-        
-      } else if (isMFR) {
-        console.log('Deleting MFR lead - recording MFR 0 for audit');
-        await createHitCount({
-          repId,
-          hitType: 'MFR',
-          hitValue: 0,
-          lane,
-          month: now.getMonth() + 1,
-          year: now.getFullYear(),
-        });
-        
-        // ✅ Log DELETE_MFR to audit
-        const { logAuditAction } = await import('./auditLogger');
-        await logAuditAction({
-          actionSubtype: 'DELETE_MFR',
-          tableName: 'leads',
-          recordId: leadId,
-          affectedRepId: repId,
-          accountNumber: accountNumber,
-          hitValueChange: 0,
-          hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
-          lane: lane,
-          actionDay: day,          // ✅ ADD
-          actionMonth: leadMonth,  // ✅ ADD
-          actionYear: leadYear     // ✅ ADD
-        });
-        
-      } else {
-        console.log('Deleting NL lead - compensating with NL -1');
-        await createHitCount({
-          repId,
-          hitType: 'NL',
-          hitValue: -1,
-          lane,
-          month: now.getMonth() + 1,
-          year: now.getFullYear(),
-        });
-        
-        // ✅ Log DELETE_NL to audit
-        const { logAuditAction } = await import('./auditLogger');
-        await logAuditAction({
-          actionSubtype: 'DELETE_NL',
-          tableName: 'leads',
-          recordId: leadId,
-          affectedRepId: repId,
-          accountNumber: accountNumber,
-          hitValueChange: -1,
-          hitValueTotal: totalBeforeAction,  // ✅ BEFORE value
-          lane: lane,
-          actionDay: day,          // ✅ ADD
-          actionMonth: leadMonth,  // ✅ ADD
-          actionYear: leadYear     // ✅ ADD
-        });
-      }
-    } catch (compErr) {
-      console.error('Failed to write compensating hit on lead delete:', compErr);
+      const { getRepHitTotal } = await import('./auditLogger');
+      totalBeforeAction = await getRepHitTotal(
+        repId,
+        lane,
+        now.getMonth() + 1,
+        now.getFullYear()
+      );
+    } catch (err) {
+      console.error('Failed to get current hit total:', err);
     }
+  }
+  
+  // Create compensating hit count and log to audit
+  if (isLRL) {
+    // ✅ Check if the MFR being replaced was a cushion lead
+    if (isCushionLead) {
+      console.log('Deleting LRL that replaced cushion lead - no hit adjustment');
+      // Log to audit with 0 change
+      const { logAuditAction } = await import('./auditLogger');
+      await logAuditAction({
+        actionSubtype: 'DELETE_LRL',
+        tableName: 'leads',
+        recordId: leadId,
+        affectedRepId: repId,
+        accountNumber: accountNumber,
+        hitValueChange: 0,
+        hitValueTotal: totalBeforeAction,
+        lane: lane,
+        actionDay: day,
+        actionMonth: leadMonth,
+        actionYear: leadYear
+      });
+    } else {
+      console.log('Deleting LRL lead - recording LRL -1');
+      await createHitCount({
+        repId,
+        hitType: 'LRL',
+        hitValue: 0,
+        lane,
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+      });
+      
+      const { logAuditAction } = await import('./auditLogger');
+      await logAuditAction({
+        actionSubtype: 'DELETE_LRL',
+        tableName: 'leads',
+        recordId: leadId,
+        affectedRepId: repId,
+        accountNumber: accountNumber,
+        hitValueChange: 0,
+        hitValueTotal: totalBeforeAction - 1,
+        lane: lane,
+        actionDay: day,
+        actionMonth: leadMonth,
+        actionYear: leadYear
+      });
+    }
+  } else if (isMFR) {
+    // MFR deletion logic stays the same (always 0)
+    console.log('Deleting MFR lead - recording MFR 0 for audit');
+    await createHitCount({
+      repId,
+      hitType: 'MFR',
+      hitValue: 0,
+      lane,
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
+    });
+    
+    const { logAuditAction } = await import('./auditLogger');
+    await logAuditAction({
+      actionSubtype: 'DELETE_MFR',
+      tableName: 'leads',
+      recordId: leadId,
+      affectedRepId: repId,
+      accountNumber: accountNumber,
+      hitValueChange: 0,
+      hitValueTotal: totalBeforeAction,
+      lane: lane,
+      actionDay: day,
+      actionMonth: leadMonth,
+      actionYear: leadYear
+    });
+  } else {
+    // ✅ NL deletion - check if cushion
+      if (isCushionLead) {
+    console.log('Deleting cushion NL lead - refunding cushion and no hit adjustment');
+    
+    // ✅ REFUND THE CUSHION
+    const { incrementCushionOnDelete } = await import('./cushionService');
+    await incrementCushionOnDelete(repId, lane);
+    
+    const { logAuditAction } = await import('./auditLogger');
+    await logAuditAction({
+      actionSubtype: 'DELETE_NL',
+      tableName: 'leads',
+      recordId: leadId,
+      affectedRepId: repId,
+      accountNumber: accountNumber,
+      hitValueChange: 0,
+      hitValueTotal: totalBeforeAction,
+      lane: lane,
+      actionDay: day,
+      actionMonth: leadMonth,
+      actionYear: leadYear
+    });
+  } else {
+    console.log('Deleting NL lead - compensating with NL -1');
+    await createHitCount({
+      repId,
+      hitType: 'NL',
+      hitValue: -1,
+      lane,
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
+    });
+    
+    const { logAuditAction } = await import('./auditLogger');
+    await logAuditAction({
+      actionSubtype: 'DELETE_NL',
+      tableName: 'leads',
+      recordId: leadId,
+      affectedRepId: repId,
+      accountNumber: accountNumber,
+      hitValueChange: -1,
+      hitValueTotal: totalBeforeAction - 1,
+      lane: lane,
+      actionDay: day,
+      actionMonth: leadMonth,
+      actionYear: leadYear
+    });
+  }
+}
+
+} catch (compErr) {
+  console.error('Failed to write compensating hit on lead delete:', compErr);
+}
     
     console.log(`Successfully deleted lead with replacement handling: ${leadId}`);
     
@@ -917,3 +1014,4 @@ export function subscribeLeads(onChange: () => void): () => void {
     void supabase.removeChannel(channel) // fire and forget
   }
 }
+export { wasCushionLead };

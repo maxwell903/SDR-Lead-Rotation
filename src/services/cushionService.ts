@@ -228,6 +228,26 @@ export async function checkAndDecrementCushion(
 }
 
 /**
+ * Increment cushion when a cushion lead is deleted (refund the cushion)
+ * This is the opposite of checkAndDecrementCushion
+ */
+export async function incrementCushionOnDelete(
+  repId: string,
+  lane: Lane
+): Promise<void> {
+  const currentCushion = await getCushionValue(repId, lane);
+  const currentOccurrences = await getCushionOccurrences(repId, lane);
+
+  console.log(`🔄 Refunding cushion for ${repId} (${lane}): x${currentCushion} → x${currentCushion + 1}`);
+
+  // Simply increment the cushion value by 1
+  // Don't touch occurrences - those represent the total number of cushioned appearances
+  await setCushionValue(repId, lane, currentCushion + 1);
+  
+  console.log(`✅ Cushion refunded: x${currentCushion} → x${currentCushion + 1}`);
+}
+
+/**
  * Get all active cushion tracking data for display
  */
 /**

@@ -52,88 +52,80 @@ const appToDbFormat = (appRecord: Partial<ReplacementRecord>) => ({
 
 export class ReplacementService {
   // Create new replacement mark
-  static async createReplacementMark(record: Omit<ReplacementRecord, 'markId' | 'markedAt' | 'isClosed'> & { day: number; month: number; year: number }): Promise<ReplacementRecord> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('User not authenticated');
-
-  console.log('Creating replacement mark with lane:', record.lane);
-
-  const dbData = {
-    lead_id: record.leadId,
-    rep_id: record.repId,
-    lane: record.lane,  // This is already normalized (RotationLane type)
-    marked_at: new Date().toISOString(),
-    account_number: record.accountNumber,
-    url: record.url,
-    created_by: user.id,
-  };
-
+  static async createReplacementMark(params: {
+  leadId: string;
+  repId: string;
+  lane: 'sub1k' | '1kplus';
+  accountNumber?: string;
+  url?: string;
+  replacedByLeadId?: string;
+  replacedAt?: number;
+  day?: number;
+  month?: number;
+  year?: number;
+}): Promise<ReplacementRecord> {
+  const { leadId, repId, lane, accountNumber, url } = params;
+  
+  // Get lead data including cushion status
+  const { data: leadData } = await supabase
+    .from('leads')
+    .select('date, month, year, was_cushion_lead')
+    .eq('id', leadId)
+    .single();
+  
+  if (!leadData) throw new Error('Lead not found');
+  
+  // ✅ SIMPLIFIED: Just read the field
+  const isCushionLead = leadData.was_cushion_lead ?? false;
+  
+  
+  // Create the replacement mark
   const { data, error } = await supabase
     .from('replacement_marks')
-    .insert(dbData)
+    .insert({
+      lead_id: leadId,
+      rep_id: repId,
+      lane,
+      account_number: accountNumber || null,
+      url: url || null
+    })
     .select()
     .single();
 
   if (error) throw error;
-  
-  const currentDate = new Date();
-  const month = currentDate.getMonth() + 1;
-  const year = currentDate.getFullYear();
-  
-  // ✅ record.lane is already type RotationLane ('sub1k' | '1kplus')
-  // No normalization needed - it's already correct
-  
-  // ✅ STEP 1: Get current total BEFORE creating hit count
-  let totalBeforeAction = 0;
-  try {
-    const { getRepHitTotal } = await import('./auditLogger');
-    totalBeforeAction = await getRepHitTotal(
-      record.repId,
-      record.lane,  // Already normalized
-      month,
-      year
-    );
-  } catch (err) {
-    console.error('Failed to get current hit total:', err);
-  }
 
-  // ✅ STEP 2: Create the hit count (-1 for MFR)
-  try {
-    console.log('Creating MFR hit with lane:', record.lane);
-    
+  // ✅ Only create hit count if NOT a cushion lead
+  if (!isCushionLead) {
+    const currentDate = new Date();
     await createHitCount({
-      repId: record.repId,
+      repId,
       hitType: 'MFR',
-      hitValue: -1,
-      lane: record.lane,  // Already normalized
-      month,
-      year
+      hitValue: 0,
+      lane,
+      month: currentDate.getMonth() + 1,
+      year: currentDate.getFullYear()
     });
-  } catch (hitError) {
-    console.error('Failed to store hit count for marked lead:', hitError);
+    console.log('MFR hit recorded with -1 value');
+  } else {
+    console.log('Cushion lead marked for replacement - no hit adjustment');
   }
 
-  // ✅ STEP 3: Log to audit trail with BEFORE value
-  try {
-    const { logAuditAction } = await import('./auditLogger');
-    
-    await logAuditAction({
-      actionSubtype: 'NL_TO_MFR',
-      tableName: 'replacement_marks',
-      recordId: data.id,
-      affectedRepId: record.repId,
-      accountNumber: record.accountNumber,
-      hitValueTotal: totalBeforeAction,
-      hitValueChange: -1,
-      lane: record.lane,
-      actionDay: record.day,      
-      actionMonth: record.month,  
-      actionYear: record.year     
-    });
-  } catch (auditError) {
-    console.error('Failed to log mark for replacement:', auditError);
-  }
-    
+  // ✅ Log to audit
+  const leadDate = new Date(leadData.date);
+  const { logAuditAction } = await import('./auditLogger');
+  await logAuditAction({
+    actionSubtype: 'NL_TO_MFR',
+    tableName: 'replacement_marks',
+    recordId: leadId,
+    affectedRepId: repId,
+    accountNumber: accountNumber || '',
+    hitValueChange: isCushionLead ? 0 : 0,
+    lane: lane,
+    actionDay: leadDate.getDate(),
+    actionMonth: leadData.month,
+    actionYear: leadData.year
+  });
+
   return dbToAppFormat(data);
 }
 
@@ -150,10 +142,10 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
     userId: user.id
   });
 
-  // ✅ STEP 1: Check if already replaced BEFORE attempting update
+  // ✅ Check if already replaced BEFORE attempting update
   const { data: existingMark, error: checkError } = await supabase
     .from('replacement_marks')
-    .select('replaced_by_lead_id')
+    .select('*')
     .eq('id', markId)
     .single();
   
@@ -165,7 +157,19 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
     throw new Error('REPLACEMENT_ALREADY_EXISTS');
   }
   
-  // ✅ STEP 2: Now safe to update
+  // ✅ Check if the original MFR was a cushion lead
+  const { data: leadData } = await supabase
+    .from('leads')
+    .select('date, month, year, was_cushion_lead')
+    .eq('id', existingMark.lead_id)
+    .single();
+  
+  if (!leadData) throw new Error('Original lead not found');
+  
+  // ✅ Check cushion status
+  const isCushionLead = leadData.was_cushion_lead ?? false;
+  
+  // ✅ Now safe to update
   const { data, error } = await supabase
     .from('replacement_marks')
     .update({ 
@@ -180,132 +184,140 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
   
   console.log('Replacement mark updated successfully:', { markId, replacedByLeadId });
   
-  // ✅ Store hit count for replacement lead (LRL = 0)
-  try {
-    const currentDate = new Date();
-    console.log('Creating LRL hit count with value 0');
-    
-    const normalizedLane: 'sub1k' | '1kplus' = 
-      data.lane === '1kplus' ? '1kplus' : 'sub1k';
-    
-    await createHitCount({
-      repId: data.rep_id,
-      hitType: 'LRL',
-      hitValue: 1,
-      lane: normalizedLane,
-      month: currentDate.getMonth() + 1,
-      year: currentDate.getFullYear()
-    });
-    
-    console.log('LRL hit recorded with 1 value');
-  } catch (hitError) {
-    console.error('Failed to store LRL hit count:', hitError);
+  // ✅ Store hit count for replacement lead (LRL)
+  // Only create hit if the original MFR was NOT a cushion lead
+  if (!isCushionLead) {
+    try {
+      const currentDate = new Date();
+      console.log('Creating LRL hit count with value 1');
+      
+      const normalizedLane: 'sub1k' | '1kplus' = 
+        data.lane === '1kplus' ? '1kplus' : 'sub1k';
+      
+      await createHitCount({
+        repId: data.rep_id,
+        hitType: 'LRL',
+        hitValue: 1,
+        lane: normalizedLane,
+        month: currentDate.getMonth() + 1,
+        year: currentDate.getFullYear()
+      });
+      
+      console.log('LRL hit recorded with 1 value');
+    } catch (hitError) {
+      console.error('Failed to store LRL hit count:', hitError);
+    }
+  } else {
+    console.log('LRL replacing cushion lead - no hit adjustment');
   }
   
   return dbToAppFormat(data);
 }
-  
 
 // This ensures audit logging ALWAYS happens for MFR → NL (unmark)
 // Complete fixed version of deleteReplacementMark in replacementService.ts
 // This ensures audit logging ALWAYS happens for MFR → NL (unmark)
 
-    static async deleteReplacementMark(markId: string): Promise<void> {
-      // 1) Read the mark we're about to remove
-      const { data: mark, error: fetchError } = await supabase
-        .from('replacement_marks')
-        .select('*')
-        .eq('id', markId)
-        .single();
-      if (fetchError) throw fetchError;
-      if (!mark) throw new Error('Replacement mark not found');
+    
+static async deleteReplacementMark(markId: string): Promise<void> {
+  // 1) Read the mark we're about to remove
+  const { data: mark, error: fetchError } = await supabase
+    .from('replacement_marks')
+    .select('*')
+    .eq('id', markId)
+    .single();
+  if (fetchError) throw fetchError;
+  if (!mark) throw new Error('Replacement mark not found');
 
-      // ✅ 1.5) FETCH the lead to get its date
-      const { data: leadData } = await supabase
-        .from('leads')
-        .select('date')
-        .eq('id', mark.lead_id)
-        .single();
-      
-      if (!leadData) throw new Error('Lead not found for replacement mark');
-      
-      const leadDate = new Date(leadData.date);
-      const { day, month, year } = getDateComponents(leadDate);
+  // ✅ Fetch the lead to get its date and cushion status
+  const { data: leadData } = await supabase
+    .from('leads')
+    .select('date, was_cushion_lead')
+    .eq('id', mark.lead_id)
+    .single();
+  
+  if (!leadData) throw new Error('Lead not found for replacement mark');
+  
+  const leadDate = new Date(leadData.date);
+  const { day, month, year } = getDateComponents(leadDate);
 
-      console.log('🟡 Unmarking lead (MFR → NL):', {
-        markId,
-        leadId: mark.lead_id,
-        repId: mark.rep_id,
-        lane: mark.lane
-      });
+  console.log('🟡 Unmarking lead (MFR → NL):', {
+    markId,
+    leadId: mark.lead_id,
+    repId: mark.rep_id,
+    lane: mark.lane
+  });
 
-      // ✅ 2) Normalize lane from database (handles legacy 'over1k', '1k+', etc.)
-      const normalizedLane: 'sub1k' | '1kplus' = 
-        (mark.lane === '1kplus' || mark.lane === 'over1k' || mark.lane === '1k+')
-          ? '1kplus' 
-          : 'sub1k';
-      
-      // ✅ 3) Use SAME timestamp for all operations
-      const operationDate = new Date();
-      
-      
-      
-      // 4) Delete the mark from database FIRST
-      const { error: deleteError } = await supabase
-        .from('replacement_marks')
-        .delete()
-        .eq('id', markId);
-      if (deleteError) throw deleteError;
-      console.log('✅ Replacement mark deleted from database');
+  // ✅ Normalize lane from database (handles legacy 'over1k', '1k+', etc.)
+  const normalizedLane: 'sub1k' | '1kplus' = 
+    (mark.lane === '1kplus' || mark.lane === 'over1k' || mark.lane === '1k+')
+      ? '1kplus' 
+      : 'sub1k';
+  
+  // ✅ Check if this was a cushion lead
+  const isCushionLead = leadData.was_cushion_lead ?? false;
+  
+  // 3) Use SAME timestamp for all operations
+  const operationDate = new Date();
+  
+  // 4) Delete the mark from database FIRST
+  const { error: deleteError } = await supabase
+    .from('replacement_marks')
+    .delete()
+    .eq('id', markId);
+  if (deleteError) throw deleteError;
+  console.log('✅ Replacement mark deleted from database');
 
-      // 5) NOW get total AFTER deletion but BEFORE creating new hit
-      let totalBeforeAction = 0;
-      try {
-        const { getRepHitTotal } = await import('./auditLogger');
-        totalBeforeAction = await getRepHitTotal(
-          mark.rep_id,
-          normalizedLane,
-          month,
-          year
-        );
-        console.log('📊 Total before creating MFR_UNMARK hit:', totalBeforeAction);
-      } catch (err) {
-        console.error('Failed to get current hit total:', err);
-      }
-
-      // 6) Create compensating hit count (MFR_UNMARK = +1)
-      // ❌ REMOVE: leadEntryId: mark.lead_id,
-      await createHitCount({
-        repId: mark.rep_id,
-        // ✅ NO leadEntryId field here!
-        hitType: 'MFR_UNMARK',
-        hitValue: 1,
-        lane: normalizedLane,
+  // 5) Get total BEFORE creating new hit (only if not cushion)
+  let totalBeforeAction = 0;
+  if (!isCushionLead) {
+    try {
+      const { getRepHitTotal } = await import('./auditLogger');
+      totalBeforeAction = await getRepHitTotal(
+        mark.rep_id,
+        normalizedLane,
         month,
-        year,
-      });
-      console.log('✅ MFR_UNMARK hit count created');
-
-      // 7) Log to audit trail
-      const { logAuditAction } = await import('./auditLogger');
-      await logAuditAction({
-        actionSubtype: 'MFR_TO_NL',
-        tableName: 'replacement_marks',
-        recordId: markId,
-        affectedRepId: mark.rep_id,
-        accountNumber: mark.account_number || '',
-        hitValueTotal: totalBeforeAction,
-        hitValueChange: 1,
-        lane: normalizedLane,
-        actionDay: day,      
-        actionMonth: month,  
-        actionYear: year     
-      });
-      
-      console.log('✅ MFR_TO_NL audit log created successfully');
-
+        year
+      );
+      console.log('📊 Total before creating MFR_UNMARK hit:', totalBeforeAction);
+    } catch (err) {
+      console.error('Failed to get current hit total:', err);
     }
+  }
 
+  // 6) Create compensating hit count (only if NOT cushion lead)
+  if (!isCushionLead) {
+    await createHitCount({
+      repId: mark.rep_id,
+      hitType: 'MFR_UNMARK',
+      hitValue: 0,
+      lane: normalizedLane,
+      month,
+      year,
+    });
+    console.log('✅ MFR_UNMARK hit count created');
+  } else {
+    console.log('Cushion lead unmarked - no hit adjustment');
+  }
+
+  // 7) Log to audit trail
+  const { logAuditAction } = await import('./auditLogger');
+  await logAuditAction({
+    actionSubtype: 'MFR_TO_NL',
+    tableName: 'replacement_marks',
+    recordId: markId,
+    affectedRepId: mark.rep_id,
+    accountNumber: mark.account_number || '',
+    hitValueTotal: totalBeforeAction,
+    hitValueChange: isCushionLead ? 0 : 0,
+    lane: normalizedLane,
+    actionDay: day,      
+    actionMonth: month,  
+    actionYear: year     
+  });
+  
+  console.log('✅ MFR_TO_NL audit log created successfully');
+}
 
     
   // Undo replacement (clear replaced_by_lead_id)

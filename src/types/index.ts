@@ -31,6 +31,7 @@ export interface Lead {
   comments: string[]
   month: number
   year: number
+  wasCushionLead?: boolean;  // ✅ ADD THIS
 }
 
 export interface RotationState {
