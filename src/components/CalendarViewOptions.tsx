@@ -263,7 +263,7 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
               </div>
             </div>
           </div>
-                {/* Updated Legend Section */}
+           {/* Updated Legend Section */}
 <div className="mt-6 pt-6 border-t border-gray-200">
   <label className="text-sm font-semibold text-gray-700 mb-3 block">Calendar Legend</label>
   
@@ -272,19 +272,23 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
     <p className="text-xs font-medium text-gray-500 mb-2">Entry Types</p>
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
       <div className="flex items-center space-x-2">
-        <div className="w-4 h-4 bg-blue-100 border border-blue-200 rounded"></div>
-        <span className="text-gray-700">Lead Assignment</span>
+        <div className="w-4 h-4 bg-white border border-gray-200 rounded"></div>
+        <span className="text-gray-700">Lead (Counted as Hit)</span>
       </div>
       <div className="flex items-center space-x-2">
-        <div className="w-4 h-4 bg-yellow-100 border border-yellow-200 rounded"></div>
+        <div className="w-4 h-4 bg-blue-50 border border-blue-200 rounded"></div>
+        <span className="text-gray-700">Cushion Lead (No Hit)</span>
+      </div>
+      <div className="flex items-center space-x-2">
+        <div className="w-4 h-4 bg-yellow-50 border border-yellow-200 rounded"></div>
         <span className="text-gray-700">Skip Day</span>
       </div>
       <div className="flex items-center space-x-2">
-        <div className="w-4 h-4 bg-red-100 border border-red-200 rounded"></div>
+        <div className="w-4 h-4 bg-red-50 border border-red-200 rounded"></div>
         <span className="text-gray-700">Out of Office</span>
       </div>
       <div className="flex items-center space-x-2">
-        <div className="w-4 h-4 bg-green-100 border border-green-200 rounded"></div>
+        <div className="w-4 h-4 bg-green-50 border border-green-200 rounded"></div>
         <span className="text-gray-700">Next in Rotation</span>
       </div>
     </div>
@@ -331,7 +335,7 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
       </div>
     </div>
   </div>
-</div>
+</div>    
         </div>
       )}
     </div>
