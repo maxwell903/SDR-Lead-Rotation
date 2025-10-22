@@ -227,7 +227,7 @@ useEffect(() => {
                   </div>
                   <div className="bg-red-100 rounded-lg p-3 border border-red-200">
                     <div className="font-bold text-gray-800">MFR - Marked For Replacement</div>
-                    <div className="text-gray-700 text-sm">Bad lead that needs replacing = <span className="font-bold text-red-700">-1 hit</span></div>
+                    <div className="text-gray-700 text-sm">Bad lead that needs replacing = <span className="font-bold text-red-700"> 0 hit</span></div>
                   </div>
                 </div>
                 <div className="space-y-3">
