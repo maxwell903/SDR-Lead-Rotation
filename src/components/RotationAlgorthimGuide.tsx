@@ -251,7 +251,7 @@ useEffect(() => {
                 <div>
                   <h4 className="font-semibold text-gray-800 mb-2">Net Scoring System</h4>
                   <p className="text-gray-700 text-sm leading-relaxed">
-                    Each rep accumulates a net hit score. Normal leads (+1) and bad leads requiring replacement (-1) 
+                    Each rep accumulates a net hit score. Normal leads (+1) and bad leads requiring replacement (-0) 
                     affect the score, while replacement leads (+0) are given a nuetral value. This is intentional and is meant to be a free lead. 
                     The rep with the lowest net score receives the next lead assignment. The tie breaker is the original order.
                   </p>

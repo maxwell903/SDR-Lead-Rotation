@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 
 export type AuditActionType = 
   // Lead Entry Actions
+  | 'CUSHION_LEAD'
   | 'ADD_NL'
   | 'DELETE_NL'
   | 'UPDATE_LEAD'
@@ -27,6 +28,7 @@ interface AuditLogParams {
   actionSubtype: AuditActionType;
   tableName: string;
   recordId: string;
+  cushionImpact?: string; 
   
   // Optional fields for different action types
   affectedRepId?: string;           // Sales rep affected by this action
@@ -67,6 +69,7 @@ export async function logAuditAction(params: AuditLogParams): Promise<void> {
       affected_rep_id: params.affectedRepId || null,
       account_number: params.accountNumber || null,
       hit_value_change: params.hitValueChange ?? null,
+      cushion_impact: params.cushionImpact || null,
       hit_value_total: params.hitValueTotal ?? null,
       position_from: params.positionFrom ?? null,
       position_to: params.positionTo ?? null,

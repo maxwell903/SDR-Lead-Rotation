@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 
 export type AuditActionType = 
   // Lead Entry Actions
+  | 'CUSHION_LEAD'     // Lead absorbed by cushion
   | 'ADD_NL'           // Normal Lead added
   | 'DELETE_NL'        // Normal Lead deleted
   | 'NL_TO_MFR'        // Normal Lead marked for replacement
@@ -48,6 +49,7 @@ export interface AuditActionRecord {
   action_subtype: AuditActionType | null;
   affected_rep_id: string | null;
   account_number: string | null;
+  cushion_impact: string | null;
   hit_value_change: number | null;
   hit_value_total: number | null;
   position_from: number | null;
@@ -97,6 +99,7 @@ export async function fetchAuditActions(options: {
       action_subtype,
       affected_rep_id,
       account_number,
+      cushion_impact,
       hit_value_change,
       hit_value_total,
       position_from,
@@ -325,9 +328,19 @@ export async function transformAuditAction(
       hitValueDisplay = `Position ${action.position_from}`;
     }
   } else {
-    if (action.hit_value_change !== null && action.hit_value_change !== 0) {
-      const sign = action.hit_value_change > 0 ? '+' : '';
-      hitValueDisplay = `${sign}${action.hit_value_change}`;
+     
+    // Special cases for replacements that don't affect hit counts
+    if (action.action_subtype === 'MFR_TO_LRL' || 
+        action.action_subtype === 'LTR_TO_MFR' ||
+        action.action_subtype === 'DELETE_LRL' ||
+        action.action_subtype === 'CUSHION_LEAD') {
+      hitValueDisplay = '-';  // No hit value for replacement swaps
+    }
+    else {
+      if (action.hit_value_change !== null && action.hit_value_change !== 0) {
+        const sign = action.hit_value_change > 0 ? '+' : '';
+        hitValueDisplay = `${sign}${action.hit_value_change}`;
+      }
     }
   }
 
@@ -341,7 +354,11 @@ export async function transformAuditAction(
       hitValueTotalDisplay = `Took ${replacedRepName}'s spot`;
     }
   } else {
-    if (action.hit_value_change !== null && action.hit_value_total !== null) {
+    // Special case: MFR â†' NL should show dash (no hit recorded at time of marking)
+    if (action.action_subtype === 'MFR_TO_NL') {
+      hitValueTotalDisplay = '-';
+    }
+    else if (action.hit_value_change !== null && action.hit_value_total !== null) {
       const startingValue = action.hit_value_total;
       const change = action.hit_value_change;
       const endingValue = startingValue + change;
@@ -388,6 +405,7 @@ function formatActionType(actionType: string | null): string {
 
   const formatMap: Record<string, string> = {
     // Lead actions
+    'CUSHION_LEAD': 'Cushion Lead',
     'ADD_NL': 'ADD NL',
     'DELETE_NL': 'Delete NL',
     'UPDATE_LEAD': 'Update Lead',  // ✅ ADD THIS

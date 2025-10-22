@@ -784,7 +784,7 @@ const renderRotationItem = (
         </span>
         {item.hasOpenReplacements && (
           <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full border border-orange-300">
-            Needs Replacement
+            MFR
           </span>
         )}
       </div>

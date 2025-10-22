@@ -197,7 +197,7 @@ static async updateReplacementMark(markId: string, replacedByLeadId: string): Pr
       await createHitCount({
         repId: data.rep_id,
         hitType: 'LRL',
-        hitValue: 1,
+        hitValue: 0,
         lane: normalizedLane,
         month: currentDate.getMonth() + 1,
         year: currentDate.getFullYear()

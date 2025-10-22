@@ -176,13 +176,29 @@ export async function createLead(
       accountNumber: created.accountNumber,
       lane,
       hitValueChange: 1,
-      hitValueTotal: totalBefore + 1,
+      hitValueTotal: totalBefore,
       actionDay: created.date.getDate(),
       actionMonth: created.month,
       actionYear: created.year,
     });
   } else {
-    // Log that lead was assigned but no hit recorded due to cushion
+    // âœ… NEW: Log to audit trail as a cushion lead
+    const { day, month, year } = getDateComponents(created.date);
+    
+    await logAuditAction({
+      actionSubtype: 'CUSHION_LEAD',
+      tableName: 'leads',
+      recordId: created.id,
+      affectedRepId: created.assignedTo,
+      accountNumber: created.accountNumber,
+      cushionImpact: `x${newCushionValue + 1} â†' x${newCushionValue}`,  // Show the transition
+      lane,
+      actionDay: day,
+      actionMonth: month,
+      actionYear: year,
+    });
+    
+    // Also log to old actions table for backwards compatibility
     await logAction({
       actionType: 'CREATE',
       tableName: 'leads',
@@ -281,7 +297,7 @@ export async function createLeadWithReplacement(
         recordId: created.id,
         affectedRepId: repId,
         accountNumber: created.accountNumber,
-        hitValueChange: 1,  // LRL adds 0 hits
+        hitValueChange: 0,  // LRL adds 0 hits
         hitValueTotal: totalBeforeAction,  
         lane: replacementLane,
         actionDay: day,      
@@ -795,7 +811,7 @@ try {
         affectedRepId: repId,
         accountNumber: accountNumber,
         hitValueChange: 0,
-        hitValueTotal: totalBeforeAction - 1,
+        hitValueTotal: totalBeforeAction,
         lane: lane,
         actionDay: day,
         actionMonth: leadMonth,
@@ -870,7 +886,7 @@ try {
       affectedRepId: repId,
       accountNumber: accountNumber,
       hitValueChange: -1,
-      hitValueTotal: totalBeforeAction - 1,
+      hitValueTotal: totalBeforeAction,
       lane: lane,
       actionDay: day,
       actionMonth: leadMonth,
