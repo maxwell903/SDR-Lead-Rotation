@@ -15,6 +15,7 @@ export interface DbReplacementMark {
   id: string;
   lead_id: string;
   rep_id: string;
+  was_cushion_lead: boolean;
   lane: string;
   marked_at: string;
   replaced_by_lead_id?: string;
@@ -30,6 +31,7 @@ const dbToAppFormat = (dbRecord: DbReplacementMark): ReplacementRecord => ({
   markId: dbRecord.id,
   leadId: dbRecord.lead_id,
   repId: dbRecord.rep_id,
+  wasCushionLead: dbRecord.was_cushion_lead,
   lane: dbRecord.lane as any,
   accountNumber: dbRecord.account_number || '',
   url: dbRecord.url || '',
@@ -43,6 +45,7 @@ const dbToAppFormat = (dbRecord: DbReplacementMark): ReplacementRecord => ({
 const appToDbFormat = (appRecord: Partial<ReplacementRecord>) => ({
   lead_id: appRecord.leadId,
   rep_id: appRecord.repId,
+  was_cushion_lead: appRecord.wasCushionLead,
   lane: appRecord.lane,
   marked_at: appRecord.markedAt ? new Date(appRecord.markedAt).toISOString() : undefined,
   replaced_by_lead_id: appRecord.replacedByLeadId,
@@ -85,6 +88,7 @@ export class ReplacementService {
     .insert({
       lead_id: leadId,
       rep_id: repId,
+      was_cushion_lead: isCushionLead,
       lane,
       account_number: accountNumber || null,
       url: url || null
@@ -229,10 +233,13 @@ static async deleteReplacementMark(markId: string): Promise<void> {
   if (fetchError) throw fetchError;
   if (!mark) throw new Error('Replacement mark not found');
 
-  // ✅ Fetch the lead to get its date and cushion status
+  // ✅ Get the cushion status from the replacement mark (not the lead)
+  const isCushionLead = mark.was_cushion_lead ?? false;
+  
+  // Fetch the lead to get its date
   const { data: leadData } = await supabase
     .from('leads')
-    .select('date, was_cushion_lead')
+    .select('date')
     .eq('id', mark.lead_id)
     .single();
   
@@ -254,8 +261,6 @@ static async deleteReplacementMark(markId: string): Promise<void> {
       ? '1kplus' 
       : 'sub1k';
   
-  // ✅ Check if this was a cushion lead
-  const isCushionLead = leadData.was_cushion_lead ?? false;
   
   // 3) Use SAME timestamp for all operations
   const operationDate = new Date();
@@ -267,6 +272,20 @@ static async deleteReplacementMark(markId: string): Promise<void> {
     .eq('id', markId);
   if (deleteError) throw deleteError;
   console.log('✅ Replacement mark deleted from database');
+
+  // ✅ Restore the cushion status in the leads table
+  // Use the status stored in the replacement mark
+  if (isCushionLead) {
+    const { error: updateError } = await supabase
+      .from('leads')
+      .update({ was_cushion_lead: true })
+      .eq('id', mark.lead_id);
+    
+    if (updateError) {
+      console.error('Failed to preserve cushion status:', updateError);
+    }
+  }
+ 
 
   // 5) Get total BEFORE creating new hit (only if not cushion)
   let totalBeforeAction = 0;

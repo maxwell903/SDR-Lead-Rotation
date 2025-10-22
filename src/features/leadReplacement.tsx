@@ -10,6 +10,7 @@ export interface ReplacementRecord {
   markId: string;
   leadId: string;
   repId: string;
+  wasCushionLead: boolean;
   lane: RotationLane;
   accountNumber: string;
   url?: string;
@@ -97,11 +98,13 @@ export const markLeadForReplacement = (
       markId: `mark_${lead.id}`,
       leadId: lead.id,
       repId: lead.assignedTo,
+       wasCushionLead: lead.wasCushionLead ?? false,
       lane: laneFromUnits(lead.unitCount),
       accountNumber: lead.accountNumber || '',
       url: lead.url,
       markedAt: now(),
       get isClosed() { return Boolean(this.replacedByLeadId); },
+      
     };
     
     return {
