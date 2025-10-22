@@ -191,7 +191,7 @@ export async function createLead(
       recordId: created.id,
       affectedRepId: created.assignedTo,
       accountNumber: created.accountNumber,
-      cushionImpact: `x${newCushionValue + 1} â†' x${newCushionValue}`,  // Show the transition
+      cushionImpact: `x${newCushionValue + 1} → x${newCushionValue}`,  // Show the transition
       lane,
       actionDay: day,
       actionMonth: month,

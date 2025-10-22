@@ -358,6 +358,17 @@ export async function transformAuditAction(
     if (action.action_subtype === 'MFR_TO_NL') {
       hitValueTotalDisplay = '-';
     }
+    // Special case: CUSHION_LEAD shows cushion impact
+    if (action.action_subtype === 'CUSHION_LEAD' && action.cushion_impact) {
+      hitValueTotalDisplay = action.cushion_impact;  // e.g., "x2 → x1"
+    }
+    // Special cases: These actions don't have meaningful hit totals - show dash
+    else if (action.action_subtype === 'MFR_TO_NL' ||
+        action.action_subtype === 'MFR_TO_LRL' ||
+        action.action_subtype === 'LTR_TO_MFR' ||
+        action.action_subtype === 'DELETE_LRL') {
+      hitValueTotalDisplay = '-';
+    }
     else if (action.hit_value_change !== null && action.hit_value_total !== null) {
       const startingValue = action.hit_value_total;
       const change = action.hit_value_change;

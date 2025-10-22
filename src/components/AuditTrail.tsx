@@ -206,8 +206,8 @@ const getLaneColor = (lane: string): string => {
     if (actionType.includes('OOO')) return 'bg-red-100 text-red-700';
     if (actionType.includes('Skip')) return 'bg-yellow-100 text-yellow-700';
     if (actionType.includes('MFR') && actionType.includes('LRL')) return 'bg-gray-100 text-green-700';
-    if (actionType.includes('MFR → NL') ) return 'bg-green-100 text-green-700';
-    if (actionType.includes('MFR') ) return 'bg-orange-100 text-orange-700';
+    if (actionType.includes('MFR → NL') ) return 'bg-gray-100 text-green-700';
+    if (actionType.includes('MFR') ) return 'bg-gray-100 text-orange-700';
     
     return 'bg-gray-100 text-gray-700';
   };
