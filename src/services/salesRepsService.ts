@@ -2,17 +2,16 @@ import { supabase } from '../lib/supabase'
 import type { SalesRep } from '../types'
 import { logAuditAction } from './auditLogger'
 
-// Allowed property types in your app's strict union
+
 const ALLOWED_PROPERTY_TYPES = ['MFH', 'MF', 'SFH', 'Commercial'] as const
-type PropertyType = typeof ALLOWED_PROPERTY_TYPES[number]
+
 
 // Helper to coerce DB JSON into your strict Parameters shape
 function normalizeParameters(input: any): SalesRep['parameters'] {
   const raw = input ?? {}
   const propertyTypesRaw = Array.isArray(raw.propertyTypes) ? raw.propertyTypes : []
-  const propertyTypes = propertyTypesRaw.filter((p: any): p is PropertyType =>
-    ALLOWED_PROPERTY_TYPES.includes(p)
-  )
+  // Accept all strings - no filtering needed since they come from DB
+  const propertyTypes = propertyTypesRaw.filter((p: any): p is string => typeof p === 'string')
   const maxUnits =
     typeof raw.maxUnits === 'number' || raw.maxUnits === null ? raw.maxUnits : null
   const canHandle1kPlus = !!raw.canHandle1kPlus

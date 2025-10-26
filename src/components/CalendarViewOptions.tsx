@@ -247,7 +247,7 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
                         onChange={(e) => onShowCanDoChange(e.target.checked)}
                         className="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
                       />
-                      <span className="text-sm text-gray-600">Restrictions</span>
+                      <span className="text-sm text-gray-600">Allowed</span>
                     </label>
                     <label className="flex items-center space-x-2 ml-4">
                       <input
@@ -256,7 +256,7 @@ const CalendarViewOptions: React.FC<CalendarViewOptionsProps> = ({
                         onChange={(e) => onShowCantDoChange(e.target.checked)}
                         className="w-4 h-4 text-red-600 bg-gray-100 border-gray-300 rounded focus:ring-red-500"
                       />
-                      <span className="text-sm text-gray-600">Permissions</span>
+                      <span className="text-sm text-gray-600">Not Allowed</span>
                     </label>
                   </>
                 )}

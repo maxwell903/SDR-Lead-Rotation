@@ -7,6 +7,7 @@ import {
 import { SalesRep, LeadEntry, RotationState, MonthData } from '../types';
 import { DatePicker } from './DatePicker';
 import { TimeInput } from './TimeInput';
+import { usePropertyTypes } from '../hooks/usePropertyTypes';
 
 
 
@@ -140,7 +141,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
   const [replaceToggle, setReplaceToggle] = useState(false);
   const [originalLeadIdToReplace, setOriginalLeadIdToReplace] = useState('');
 
-  const propertyTypeOptions: ('MFH' | 'MF' | 'SFH' | 'Commercial')[] = ['MFH', 'MF', 'SFH', 'Commercial'];
+  // Fetch property types dynamically
+  const { propertyTypes } = usePropertyTypes();
   
   const isEditing = Boolean(editingEntry);
 
@@ -502,7 +504,7 @@ useEffect(() => {
     }
   };
 
-  const handlePropertyTypeToggle = (type: 'MFH' | 'MF' | 'SFH' | 'Commercial') => {
+  const handlePropertyTypeToggle = (type: string) => {
     setFormData(prev => ({
       ...prev,
       propertyTypes: prev.propertyTypes.includes(type)
@@ -710,18 +712,18 @@ useEffect(() => {
 
                   {showPropertyTypes && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10">
-                      {propertyTypeOptions.map(type => (
+                      {propertyTypes.map(type => (
                         <label
-                          key={type}
+                          key={type.id}
                           className="flex items-center space-x-3 p-3 hover:bg-blue-100 transition-colors cursor-pointer"
                         >
                           <input
                             type="checkbox"
-                            checked={formData.propertyTypes.includes(type)}
-                            onChange={() => handlePropertyTypeToggle(type)}
+                            checked={formData.propertyTypes.includes(type.abbreviation)}
+                             onChange={() => handlePropertyTypeToggle(type.abbreviation)}
                             className="w-4 h-4 text-blue-600 border-2 border-blue-300 rounded focus:ring-blue-500"
                           />
-                          <span className="text-gray-700 font-medium">{type}</span>
+                          <span className="text-gray-700 font-medium">{type.abbreviation}</span>
                         </label>
                       ))}
                     </div>
@@ -984,11 +986,11 @@ useEffect(() => {
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmationModal
-        isOpen={showDeleteConfirm}
-        onConfirm={handleDelete}
-        onCancel={() => setShowDeleteConfirm(false)}
-        entryId={editingEntry?.id || ''}
-      />
+  isOpen={showDeleteConfirm}
+  onConfirm={handleDelete}
+  onCancel={() => setShowDeleteConfirm(false)}
+  title="Are you sure you want to delete this entry?"
+/>
     </>
   );
 };

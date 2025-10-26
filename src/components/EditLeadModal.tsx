@@ -7,6 +7,7 @@ import {
 import { SalesRep, Lead, RotationState, MonthData } from '../types';
 import { supabase } from '../lib/supabase';
 import { DatePicker } from './DatePicker';
+import { usePropertyTypes } from '../hooks/usePropertyTypes';
 
 interface EditLeadModalProps {
   onClose: () => void;
@@ -108,7 +109,7 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
   type EditLeadForm = {
     accountNumber: string;
     url: string | null;
-    propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[];
+    propertyTypes: string[];
     unitCount: number | null;
     comments: string[];
     assignedTo: string;
@@ -118,7 +119,7 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
   const [formData, setFormData] = useState<EditLeadForm>({
     accountNumber: '',
     url: null,
-    propertyTypes: [] as ('MFH' | 'MF' | 'SFH' | 'Commercial')[],
+    propertyTypes: [] as string[],
     unitCount: null,
     comments: [] as string[],
     assignedTo: '',
@@ -137,7 +138,8 @@ const EditLeadModal: React.FC<EditLeadModalProps> = ({
   const [markForReplacement, setMarkForReplacement] = useState(false);
   const [unmarkFromReplacement, setUnmarkFromReplacement] = useState(false);
 
-  const propertyTypeOptions: ('MFH' | 'MF' | 'SFH' | 'Commercial')[] = ['MFH', 'MF', 'SFH', 'Commercial'];
+  // Fetch property types dynamically
+  const { propertyTypes } = usePropertyTypes();
 
   // Determine lead type
   const isMarkedForReplacement = useMemo(() => {
@@ -456,7 +458,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
   };
 
-  const handlePropertyTypeToggle = (type: 'MFH' | 'MF' | 'SFH' | 'Commercial') => {
+  const handlePropertyTypeToggle = (type: string) => {
     setFormData(prev => ({
       ...prev,
       propertyTypes: prev.propertyTypes.includes(type)
@@ -615,18 +617,18 @@ const handleSubmit = async (e: React.FormEvent) => {
 
       {showPropertyTypes && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-10">
-          {propertyTypeOptions.map(type => (
+          {propertyTypes.map(type => (
             <label
-              key={type}
+              key={type.id}
               className="flex items-center space-x-3 p-3 hover:bg-blue-100 transition-colors cursor-pointer"
             >
               <input
                 type="checkbox"
-                checked={formData.propertyTypes.includes(type)}
-                onChange={() => handlePropertyTypeToggle(type)}
+                checked={formData.propertyTypes.includes(type.abbreviation)}
+                onChange={() => handlePropertyTypeToggle(type.abbreviation)}
                 className="w-4 h-4 text-blue-600 border-2 border-blue-300 rounded focus:ring-blue-500"
               />
-              <span className="text-gray-700 font-medium">{type}</span>
+              <span className="text-gray-700 font-medium">{type.abbreviation}</span>
             </label>
           ))}
         </div>

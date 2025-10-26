@@ -2,7 +2,7 @@ export interface SalesRep {
   id: string;
   name: string;
   parameters: {
-    propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[];
+    propertyTypes: string[];
     maxUnits: number | null;
     canHandle1kPlus: boolean;
   };
@@ -24,7 +24,7 @@ export interface Lead {
   id: string
   accountNumber: string
   url: string
-  propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[]
+  propertyTypes: string[];
   unitCount: number
   assignedTo: string  // rep id
   date: Date
@@ -59,7 +59,7 @@ export interface LeadEntry {
   year: number;
   unitCount?: number;
   rotationTarget?: 'sub1k' | 'over1k' | 'both';
-  propertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[]; // This line must be here
+  propertyTypes: string[];
   time?: string; // For OOO entries
 }
 

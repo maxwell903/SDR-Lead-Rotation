@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { SalesRep } from '../types';
+import { Plus } from 'lucide-react';
+import { usePropertyTypes } from '../hooks/usePropertyTypes';
+import PropertyTypesManager from './Propertytypesmanager';
 
 interface ParametersPanelProps {
   salesReps: SalesRep[];
@@ -13,6 +16,10 @@ const ParametersPanel: React.FC<ParametersPanelProps> = ({
   onClose 
 }) => {
   const [reps, setReps] = useState(salesReps);
+  const [showPropertyTypesManager, setShowPropertyTypesManager] = useState(false);
+
+  // Fetch property types dynamically
+  const { propertyTypes } = usePropertyTypes();
 
   // Update over1kOrder when canHandle1kPlus changes
   useEffect(() => {
@@ -86,21 +93,31 @@ const ParametersPanel: React.FC<ParametersPanelProps> = ({
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">Sales Rep Parameters</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
-            ×
-          </button>
-        </div>
+  <h3 className="text-lg font-semibold">Sales Rep Parameters</h3>
+  <div className="flex items-center space-x-3">
+    <button
+      onClick={() => setShowPropertyTypesManager(true)}
+      className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm"
+    >
+      <Plus size={16} />
+      <span>Manage Property Types</span>
+    </button>
+    <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-2xl">
+      ×
+    </button>
+  </div>
+</div>
 
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b">
                 <th className="text-left p-3 font-medium">Rep Name</th>
-                <th className="text-center p-3 font-medium">MFH</th>
-                <th className="text-center p-3 font-medium">MF</th>
-                <th className="text-center p-3 font-medium">SFH</th>
-                <th className="text-center p-3 font-medium">Commercial</th>
+                {propertyTypes.map(pt => (
+                  <th key={pt.id} className="text-center p-3 font-medium">
+                    {pt.abbreviation}
+                  </th>
+                ))}
                 <th className="text-center p-3 font-medium">Max Units</th>
                 <th className="text-center p-3 font-medium">1K+ Capable</th>
                 <th className="text-center p-3 font-medium">Sub 1K Order</th>
@@ -114,38 +131,16 @@ const ParametersPanel: React.FC<ParametersPanelProps> = ({
                 .map(rep => (
                 <tr key={rep.id} className="border-b hover:bg-gray-50">
                   <td className="p-3 font-medium">{rep.name}</td>
-                  <td className="p-3 text-center">
-                    <input
-                      type="checkbox"
-                      checked={rep.parameters.propertyTypes.includes('MFH')}
-                      onChange={() => handlePropertyTypeChange(rep.id, 'MFH')}
-                      className="rounded"
-                    />
-                  </td>
-                  <td className="p-3 text-center">
-                    <input
-                      type="checkbox"
-                      checked={rep.parameters.propertyTypes.includes('MF')}
-                      onChange={() => handlePropertyTypeChange(rep.id, 'MF')}
-                      className="rounded"
-                    />
-                  </td>
-                  <td className="p-3 text-center">
-                    <input
-                      type="checkbox"
-                      checked={rep.parameters.propertyTypes.includes('SFH')}
-                      onChange={() => handlePropertyTypeChange(rep.id, 'SFH')}
-                      className="rounded"
-                    />
-                  </td>
-                  <td className="p-3 text-center">
-                    <input
-                      type="checkbox"
-                      checked={rep.parameters.propertyTypes.includes('Commercial')}
-                      onChange={() => handlePropertyTypeChange(rep.id, 'Commercial')}
-                      className="rounded"
-                    />
-                  </td>
+                  {propertyTypes.map(pt => (
+                    <td key={pt.id} className="p-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={rep.parameters.propertyTypes.includes(pt.abbreviation)}
+                        onChange={() => handlePropertyTypeChange(rep.id, pt.abbreviation)}
+                        className="rounded"
+                      />
+                    </td>
+                  ))}
                   <td className="p-3 text-center">
                     <input
                       type="number"
@@ -209,6 +204,15 @@ const ParametersPanel: React.FC<ParametersPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Property Types Manager Modal */}
+      {showPropertyTypesManager && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <PropertyTypesManager onClose={() => setShowPropertyTypesManager(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

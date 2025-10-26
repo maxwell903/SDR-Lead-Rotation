@@ -9,6 +9,7 @@ import {
 } from '../features/leadReplacement.tsx';
 
 import CalendarViewOptions, { filterWeekendDays } from './CalendarViewOptions';
+import { usePropertyTypes } from '../hooks/usePropertyTypes';
 
 interface CalendarGridProps {
   salesReps: SalesRep[];
@@ -60,8 +61,10 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   const [showCanDo, setShowCanDo] = useState(true);
   const [showCantDo, setShowCantDo] = useState(false);
   
-  // All property types available in the system
-  const allPropertyTypes: ('MFH' | 'MF' | 'SFH' | 'Commercial')[] = ['MFH', 'MF', 'SFH', 'Commercial'];
+  // Fetch property types dynamically
+  const { propertyTypes } = usePropertyTypes();
+  // Get abbreviations for compatibility with existing code
+  const allPropertyTypes = propertyTypes.map(pt => pt.abbreviation);
   
   // Zoom controls
   const zoomIn = () => setZoomLevel(prev => Math.min(prev + 10, 150));
@@ -194,8 +197,8 @@ const formatDayHeader = (day: number) => {
         {showCantDo && cantDoTypes.length > 0 && (
           <div className="text-red-500">
             {cantDoTypes.join(', ')}
-            {rep.parameters.maxUnits && ` (nothing over ${rep.parameters.maxUnits})`}
-            {!rep.parameters.maxUnits && ` (no unit limit)`}
+            {rep.parameters.maxUnits && ` (≤${rep.parameters.maxUnits})`}
+            {!rep.parameters.maxUnits && ``}
           </div>
         )}
       </span>

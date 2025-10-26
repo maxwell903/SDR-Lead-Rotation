@@ -231,7 +231,9 @@ const initialReps: SalesRep[] = [
     rotationOrder: 1,
     sub1kOrder: 1,
     over1kOrder: 1,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   },
   {
     id: '2',
@@ -243,7 +245,9 @@ const initialReps: SalesRep[] = [
     },
     rotationOrder: 2,
     sub1kOrder: 2,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   },
   {
     id: '3',
@@ -256,7 +260,9 @@ const initialReps: SalesRep[] = [
     rotationOrder: 3,
     sub1kOrder: 3,
     over1kOrder: 2,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   },
   {
     id: '4',
@@ -268,7 +274,9 @@ const initialReps: SalesRep[] = [
     },
     rotationOrder: 4,
     sub1kOrder: 4,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   },
   {
     id: '5',
@@ -280,7 +288,9 @@ const initialReps: SalesRep[] = [
     },
     rotationOrder: 5,
     sub1kOrder: 5,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   },
   {
     id: '6',
@@ -292,7 +302,9 @@ const initialReps: SalesRep[] = [
     },
     rotationOrder: 6,
     sub1kOrder: 6,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   },
   {
     id: '7',
@@ -304,7 +316,9 @@ const initialReps: SalesRep[] = [
     },
     rotationOrder: 7,
     sub1kOrder: 7,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   },
   {
     id: '8',
@@ -316,7 +330,9 @@ const initialReps: SalesRep[] = [
     },
     rotationOrder: 8,
     sub1kOrder: 8,
-    status: 'active'
+    status: 'active',
+     cushionSub1kOriginal: 0,      // ← ADD THIS
+  cushion1kPlusOriginal: 0,
   }
 ];
 
