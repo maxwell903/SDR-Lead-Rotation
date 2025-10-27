@@ -100,6 +100,8 @@ interface LeadModalProps {
   replacementState: ReplacementState;
   monthlyData: Record<string, MonthData>;
   selectedDate?: Date;
+  reservedRepId?: string | null;
+  onReleaseReservation?: (repId: string) => void;
 }
 
 
@@ -117,7 +119,9 @@ const LeadModal: React.FC<LeadModalProps> = ({
   leads = [],
   replacementState,
   monthlyData,
-  selectedDate
+  selectedDate,
+  reservedRepId,
+  onReleaseReservation,
 }) => {
   const [formData, setFormData] = useState({
     accountNumber: '',
@@ -467,6 +471,11 @@ useEffect(() => {
       };
 
       await onSave(saveData);
+      // Release reservation after successful save
+      if (reservedRepId) {
+        const { deleteReservationByRepId } = await import('../services/leadReservationService');
+        await deleteReservationByRepId(reservedRepId);
+      }
       onClose();
     } catch (error) {
       console.error('Error saving entry:', error);
@@ -575,7 +584,13 @@ useEffect(() => {
                 )}
               </div>
               <button 
-                onClick={onClose} 
+                onClick={async () => {
+                if (reservedRepId) {
+                  const { deleteReservationByRepId } = await import('../services/leadReservationService');
+                  await deleteReservationByRepId(reservedRepId);
+                }
+                onClose();
+              }}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200 hover:border-gray-300"
               >
                 <X className="w-6 h-6" />
@@ -952,7 +967,13 @@ useEffect(() => {
           <div className="bg-blue-50 px-6 py-4 border-t-2 border-blue-200 flex space-x-4">
             <button
               type="button"
-              onClick={onClose}
+              onClick={async () => {
+              if (reservedRepId) {
+                const { deleteReservationByRepId } = await import('../services/leadReservationService');
+                await deleteReservationByRepId(reservedRepId);
+              }
+              onClose();
+            }}
               disabled={isSubmitting}
               className={`flex-1 py-3 rounded-xl transition-all duration-200 font-bold border-2 ${
                 isSubmitting 

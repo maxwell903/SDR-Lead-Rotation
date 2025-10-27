@@ -4,6 +4,7 @@ import CalendarGrid from './components/CalendarGrid';
 import RotationPanel from './components/RotationPanel';
 import SalesRepManager from './components/SalesRepManager';
 import LeadModal from './components/LeadModal';
+import LeadReservationModal from './components/LeadReservationMadal';
 import ParametersPanel from './components/ParametersPanel';
 import { SalesRep, Lead, RotationState, LeadEntry, MonthData } from './types';
 import { useReplacementState } from './hooks/useReplacementState';
@@ -27,6 +28,14 @@ import EditLeadModal from './components/EditLeadModal';
 import { useNonLeadEntries } from './hooks/useNonLeadEntries';
 import AuditTrail from './components/AuditTrail';
 import NonLeadEntryModal from './components/NonLeadEntry';
+import { useAuth } from './hooks/useAuth';
+import { 
+  subscribeToReservations, 
+  releaseReservationByRepId,
+  deleteReservationByRepId,
+  deleteReservationOnLeadAssignment,
+  type LeadReservation 
+} from './services/leadReservationService';
 
 
 
@@ -232,7 +241,7 @@ const initialReps: SalesRep[] = [
     sub1kOrder: 1,
     over1kOrder: 1,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   },
   {
@@ -246,7 +255,7 @@ const initialReps: SalesRep[] = [
     rotationOrder: 2,
     sub1kOrder: 2,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   },
   {
@@ -261,7 +270,7 @@ const initialReps: SalesRep[] = [
     sub1kOrder: 3,
     over1kOrder: 2,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   },
   {
@@ -275,7 +284,7 @@ const initialReps: SalesRep[] = [
     rotationOrder: 4,
     sub1kOrder: 4,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   },
   {
@@ -289,7 +298,7 @@ const initialReps: SalesRep[] = [
     rotationOrder: 5,
     sub1kOrder: 5,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   },
   {
@@ -303,7 +312,7 @@ const initialReps: SalesRep[] = [
     rotationOrder: 6,
     sub1kOrder: 6,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   },
   {
@@ -317,7 +326,7 @@ const initialReps: SalesRep[] = [
     rotationOrder: 7,
     sub1kOrder: 7,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   },
   {
@@ -331,19 +340,20 @@ const initialReps: SalesRep[] = [
     rotationOrder: 8,
     sub1kOrder: 8,
     status: 'active',
-     cushionSub1kOriginal: 0,      // ← ADD THIS
+     cushionSub1kOriginal: 0,      // Ã¢â€ Â ADD THIS
   cushion1kPlusOriginal: 0,
   }
 ];
 
 export default function App() {
-  // 1) All hooks at the top – never behind conditionals or early returns
+  // 1) All hooks at the top Ã¢â‚¬â€œ never behind conditionals or early returns
   const { salesReps, loading: repsLoading, error: repsError, updateSalesReps } = useSalesReps();
+   const { user } = useAuth();
   const { 
   leads: dbLeads, 
   loading: leadsLoading, 
   addLead,
-  addLeadWithReplacement,  // ← ADD THIS LINE
+  addLeadWithReplacement,  // Ã¢â€ Â ADD THIS LINE
   updateLead, 
   removeLead, 
   checkDeletionStatus 
@@ -395,6 +405,9 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [dbLoadingMessage, setDbLoadingMessage] = useState('');
   const [editingNonLeadEntry, setEditingNonLeadEntry] = useState<any | null>(null);
   const [showNonLeadEntryModal, setShowNonLeadEntryModal] = useState(false);
+  const [reservations, setReservations] = useState<Map<string, LeadReservation>>(new Map());
+  const [showReservationModal, setShowReservationModal] = useState(false);
+  const [reservedRepId, setReservedRepId] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<{ 
   day: number; 
   repId: string;
@@ -496,6 +509,64 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
     }));
    }, [salesReps, currentMonthData, replacementState]); // UPDATED: Use currentMonthData instead of monthKey/monthlyData
 
+     useEffect(() => {
+    console.log('🔄 Setting up reservation subscription in App.tsx');
+    const unsubscribe = subscribeToReservations((newReservations) => {
+      console.log('📊 Received reservation update:', newReservations.size, 'active reservations');
+      setReservations(newReservations);
+    });
+
+    return () => {
+      console.log('🔄 Cleaning up reservation subscription');
+      unsubscribe();
+    };
+  }, []);
+
+  // Define all useCallback hooks BEFORE early returns
+  const handleReserveRep = useCallback((repId: string, lane: 'sub1k' | '1kplus', reservationData?: any) => {
+    setReservedRepId(repId);
+    
+    // Immediately update local reservations state (don't wait for subscription)
+    if (reservationData) {
+      setReservations(prev => {
+        const newMap = new Map(prev);
+        newMap.set(repId, reservationData);
+        return newMap;
+      });
+    }
+    
+    setShowReservationModal(false);
+    // Now open the lead modal for this rep
+    // We'll set selectedCell to today's date for this rep
+    const today = new Date();
+    setSelectedCell({
+      day: today.getDate(),
+      repId: repId,
+      month: today.getMonth(),
+      year: today.getFullYear()
+    });
+    setShowLeadModal(true);
+  }, []);
+
+  const handleReleaseReservation = useCallback(async (repId: string) => {
+    try {
+      await releaseReservationByRepId(repId);
+      setReservedRepId(null);
+    } catch (error) {
+      console.error('Error releasing reservation:', error);
+    }
+  }, []);
+
+  const handleDeleteReservation = useCallback(async (repId: string) => {
+  try {
+    console.log('ðŸ—‘ï¸ App: Deleting reservation for rep:', repId);
+    await deleteReservationByRepId(repId);
+    setReservedRepId(null);
+  } catch (error) {
+    console.error('âŒ App: Error deleting reservation:', error);
+  }
+}, []);
+
   // 4) Render guards AFTER all hooks
   if (repsLoading) {
     return (
@@ -533,7 +604,7 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     if (isOver1k && !rep.parameters.canHandle1kPlus) return false;
     if (rep.parameters.maxUnits && leadData.unitCount > rep.parameters.maxUnits) return false;
 
-    // Property types are OPTIONAL — only enforce if some are selected.
+    // Property types are OPTIONAL Ã¢â‚¬â€ only enforce if some are selected.
     if (Array.isArray(leadData.propertyTypes) && leadData.propertyTypes.length > 0) {
       // Rep must support ALL selected types (README spec)
       const supportsAll = leadData.propertyTypes.every((t: string) =>
@@ -613,9 +684,15 @@ const getEligibleReps = (leadData: any): SalesRep[] => {
     }
   };
 
+   
+
+  
+
   const navigateMonth = (direction: 'prev' | 'next') => {
     setCurrentDate(direction === 'next' ? addMonths(currentDate, 1) : addMonths(currentDate, -1));
   };
+
+  
 
   const handleUpdateEntry = async (entryId: string, updatedData: any) => {
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
@@ -717,7 +794,7 @@ const handleAddLead = async (leadData: any) => {
       day: selectedCell?.day || new Date().getDate(),
       month: leadMonth + 1,
       year: leadYear,
-      time: leadData.oooTime, // ✅ FIXED: Pass time for both OOO and Skip
+      time: leadData.oooTime, // Ã¢Å“â€¦ FIXED: Pass time for both OOO and Skip
       rotationTarget: leadData.rotationTarget || 'both',
     });
 
@@ -805,6 +882,19 @@ const handleAddLead = async (leadData: any) => {
       });
       
       console.log('Normal lead created successfully:', newLead.id);
+
+    // Auto-delete reservation if this rep was reserved for this lane
+    const lane = leadData.unitCount >= 1000 ? '1kplus' : 'sub1k';
+    const reservation = reservations.get(assignedRepId);
+    if (reservation && reservation.lane === lane) {
+      console.log('🎯 Auto-deleting reservation for rep:', assignedRepId, 'lane:', lane);
+      await deleteReservationOnLeadAssignment(assignedRepId, lane);
+      setReservations(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(assignedRepId);
+        return newMap;
+      });
+    }
     }
 
     // Database subscription will handle UI updates
@@ -921,7 +1011,7 @@ if (entry?.type === 'lead' && entry.leadId) {
       (rec) => rec?.replacedByLeadId === entry.leadId
     );
 
-    // 🔥 REMOVED: Only the duplicate hit count creation block
+    // Ã°Å¸â€Â¥ REMOVED: Only the duplicate hit count creation block
     // Previously this created NL -1 or LRL 0 here, but deleteLeadWithReplacementHandling 
     // already handles all hit counting internally
     
@@ -1187,7 +1277,7 @@ const handleRemoveReplacementMark = async (leadId: string) => {
             
             <div className="flex items-center space-x-3">
               <button
-                onClick={() => setShowLeadModal(true)}
+                onClick={() => setShowReservationModal(true)}
                 className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-150"
               >
                 <Plus className="w-4 h-4" />
@@ -1231,6 +1321,9 @@ const handleRemoveReplacementMark = async (leadId: string) => {
                 onEditLead={handleEditLead}  
                 viewingMonth={currentDate.getMonth()}
                 viewingYear={currentDate.getFullYear()}          
+                reservations={reservations}
+                reservedRepId={reservedRepId}
+                onDeleteReservation={handleDeleteReservation}
                 />
                 <AuditTrail 
               salesReps={salesReps}
@@ -1260,6 +1353,9 @@ const handleRemoveReplacementMark = async (leadId: string) => {
             setShowLeadModal(false);
             setSelectedCell(null);
             setEditingEntry(null);
+            if (reservedRepId) {
+              handleReleaseReservation(reservedRepId);
+            }
           }}
           onSave={handleAddLead}
           salesReps={salesReps}
@@ -1272,9 +1368,18 @@ const handleRemoveReplacementMark = async (leadId: string) => {
           replacementState={replacementState}
           monthlyData={monthlyData}
           onDelete={handleDeleteEntry}
-          
+          reservedRepId={reservedRepId}
+          onReleaseReservation={handleReleaseReservation}
         />
         
+      )}
+      {showReservationModal && user && (
+        <LeadReservationModal
+          onClose={() => setShowReservationModal(false)}
+          onReserve={handleReserveRep}
+          salesReps={salesReps}
+          username={user.username || user.email || 'Unknown User'}
+        />
       )}
       {showEditLeadModal && editingLead && (
   <EditLeadModal

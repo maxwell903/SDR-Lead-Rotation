@@ -28,6 +28,9 @@ interface CalendarGridProps {
   replacementState: ReplacementState;
   onMarkForReplacement: (leadId: string) => void;
   onRemoveReplacementMark: (leadId: string) => void;
+  reservations: Map<string, any>;
+  reservedRepId: string | null;
+  onDeleteReservation: (repId: string) => void;
 }
 
 const CalendarGrid: React.FC<CalendarGridProps> = ({
@@ -46,6 +49,9 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   replacementState,
   onMarkForReplacement,
   onRemoveReplacementMark,
+  reservations,
+  reservedRepId,
+  onDeleteReservation
 
 }) => {
   // State management
@@ -65,6 +71,22 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   const { propertyTypes } = usePropertyTypes();
   // Get abbreviations for compatibility with existing code
   const allPropertyTypes = propertyTypes.map(pt => pt.abbreviation);
+
+  // Helper to check if a rep is reserved for a specific lane
+  const isRepReservedForLane = (repId: string, lane: 'sub1k' | '1kplus'): boolean => {
+    const reservation = reservations.get(repId);
+    if (!reservation) return false;
+    // Only return true if the reservation is for THIS specific lane
+    return reservation.lane === lane;
+  };
+
+  // Helper to get reservation info for a specific lane
+  const getReservationInfoForLane = (repId: string, lane: 'sub1k' | '1kplus') => {
+    const reservation = reservations.get(repId);
+    if (!reservation) return null;
+    // Only return reservation if it's for THIS specific lane
+    return reservation.lane === lane ? reservation : null;
+  };
   
   // Zoom controls
   const zoomIn = () => setZoomLevel(prev => Math.min(prev + 10, 150));
@@ -100,7 +122,7 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
     }
   };
 
-  // ✅ REPLACE the formatDayHeader function with this:
+  // âœ… REPLACE the formatDayHeader function with this:
 const formatDayHeader = (day: number) => {
   // Use viewingMonth and viewingYear props instead of current date
   const date = new Date(viewingYear, viewingMonth, day);
@@ -197,7 +219,7 @@ const formatDayHeader = (day: number) => {
         {showCantDo && cantDoTypes.length > 0 && (
           <div className="text-red-500">
             {cantDoTypes.join(', ')}
-            {rep.parameters.maxUnits && ` (≤${rep.parameters.maxUnits})`}
+            {rep.parameters.maxUnits && ` (â‰¤${rep.parameters.maxUnits})`}
             {!rep.parameters.maxUnits && ``}
           </div>
         )}
@@ -622,7 +644,9 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
               {sub1kReps.map(rep => (
                 <th 
                   key={`sub1k-${rep.id}`} 
-                  className="border-b-2 border-r border-gray-300 text-center font-medium text-gray-700 bg-blue-50"
+                  className={`border-b-2 border-r border-gray-300 text-center font-medium text-gray-700 ${
+                    isRepReservedForLane(rep.id, 'sub1k') ? 'bg-gray-200' : 'bg-blue-50'
+                  }`}
                   style={{ 
                     width: 'var(--data-cell-width)',
                     height: 'var(--header-height)',
@@ -632,7 +656,16 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                   }}
                 >
                   <div className="flex flex-col items-center justify-center h-full">
-                    <span className="font-semibold text-xs">{rep.name}</span>
+                    {isRepReservedForLane(rep.id, 'sub1k') ? (
+                      <div className="text-center">
+                        <span className="font-semibold text-xs text-gray-600">{rep.name}</span>
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          Reserved by {getReservationInfoForLane(rep.id, 'sub1k')?.reservedByUsername}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="font-semibold text-xs">{rep.name}</span>
+                    )}
                     {renderRepRestrictions(rep)}
                   </div>
                 </th>
@@ -640,7 +673,9 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
               {over1kReps.map(rep => (
                 <th 
                   key={`over1k-${rep.id}`} 
-                  className="border-b-2 border-r border-gray-300 text-center font-medium text-gray-700 bg-green-50"
+                  className={`border-b-2 border-r border-gray-300 text-center font-medium text-gray-700 ${
+                    isRepReservedForLane(rep.id, '1kplus') ? 'bg-gray-200' : 'bg-green-50'
+                  }`}
                   style={{ 
                     width: 'var(--data-cell-width)',
                     height: 'var(--header-height)',
@@ -650,7 +685,16 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                   }}
                 >
                   <div className="flex flex-col items-center justify-center h-full">
-                    <span className="font-semibold text-xs">{rep.name}</span>
+                    {isRepReservedForLane(rep.id, '1kplus') ? (
+                      <div className="text-center">
+                        <span className="font-semibold text-xs text-gray-600">{rep.name}</span>
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          Reserved by {getReservationInfoForLane(rep.id, '1kplus')?.reservedByUsername}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="font-semibold text-xs">{rep.name}</span>
+                    )}
                     {renderRepRestrictions(rep)}
                   </div>
                 </th>
@@ -683,14 +727,32 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                   </div>
                 </td>
 
-                {/* Sub 1K Rotation Cells - UPDATED: Pass rotation context */}
+                
+                
+                {/* Sub 1K Rotation Cells - UPDATED: Show reservation info */}
+
+
+                {/* Sub 1K Rotation Cells - FIXED: Transparent overlay only on today */}
                 {sub1kReps.map(rep => {
                   const entries = getEntriesForCell(day, rep.id, 'sub1k');
+                  const isReserved = isRepReservedForLane(rep.id, 'sub1k');
+                  const reservationInfo = getReservationInfoForLane(rep.id, 'sub1k');
+                  
+                  const isToday = day === currentDay && 
+                    viewingMonth === currentDate.getMonth() && 
+                    viewingYear === currentYear;
+                  const showReservationOverlay = isReserved && isToday;
+                  
                   return (
                     <td 
                       key={`${day}-${rep.id}`} 
-                      className={`border-r border-gray-200 cursor-pointer transition-all duration-200 ${getCellStyle(entries, day)}`}
-                      onClick={() => onCellClick(day, rep.id, viewingMonth, viewingYear)} // UPDATED: Pass viewingMonth and viewingYear
+                      className={`border-r border-gray-200 cursor-pointer transition-all duration-200 relative ${
+                        getCellStyle(entries, day)
+                      }`}
+                      onClick={() => {
+                        // FIXED: Allow clicking through - removed isReserved check
+                        onCellClick(day, rep.id, viewingMonth, viewingYear);
+                      }}
                       style={{ 
                         width: 'var(--data-cell-width)',
                         height: 'var(--data-cell-height)',
@@ -700,64 +762,101 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                     }}
                     >
                       <div className="flex flex-col justify-start space-y-1 h-full">
-                        {entries.length === 0 ? (
-                          <div className="text-gray-400 text-center flex items-center justify-center h-full">
-                            <span className="text-xs">Click to add</span>
-                          </div>
-                        ) : (
-                          entries.map(entry => (
-                            <div
-                              key={entry.id}
-                              data-lead-id={entry.leadId} // Add data attribute for hover targeting
-                              className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
-                              onMouseEnter={() => handleEntryHover(entry, true)}
-                              onMouseLeave={() => handleEntryHover(entry, false)}
-                            >
-                              <div className="flex-1 min-w-0">
-                                {renderEntryContent(entry)}
-                              </div>
+  {entries.length === 0 ? (
+    <div className="text-gray-400 text-center flex items-center justify-center h-full">
+      <span className="text-xs">Click to add</span>
+    </div>
+  ) : (
+    entries.map(entry => (
+      <div
+        key={entry.id}
+        data-lead-id={entry.leadId}
+        className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
+        onMouseEnter={() => handleEntryHover(entry, true)}
+        onMouseLeave={() => handleEntryHover(entry, false)}
+      >
+        <div className="flex-1 min-w-0">
+          {renderEntryContent(entry)}
+        </div>
 
-                              {/* Hover actions */}
-                              <div className="hidden group-hover:flex items-center space-x-1 ml-2">
-                                {/* Hover actions */}
-                              <div className="hidden group-hover:flex items-center space-x-1 ml-2">
-                                {/* Edit and Delete buttons */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (entry.type === 'lead') {
-                                      const lead = getLeadForEntry(entry);
-                                      if (lead) onEditLead(lead);
-                                    } else {
-                                      handleEntryAction(e, 'edit', entry);
-                                    }
-                                  }}
-                                  className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
-                                  title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
-                                >
-                                  <Edit className="w-3 h-3" />
-                                </button>
-                                
+        {/* Hover actions */}
+        <div className="hidden group-hover:flex items-center space-x-1 ml-2">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (entry.type === 'lead') {
+                const lead = getLeadForEntry(entry);
+                if (lead) onEditLead(lead);
+              } else {
+                handleEntryAction(e, 'edit', entry);
+              }
+            }}
+            className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
+            title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
+          >
+            <Edit className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    ))
+  )}
+</div>
+                      
+                      {/* NEW: Transparent Reservation Overlay - Only on Today's Cell */}
+                       {/* Transparent Reservation Overlay - Only on Today's Cell */}
+                      {showReservationOverlay && (
+                        <div 
+                          className="absolute inset-0 bg-orange-50 bg-opacity-80 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-10"
+                          style={{ borderRadius: '4px' }}
+                        >
+                          <div className="text-center pointer-events-auto">
+                            <div className="bg-orange-100 border-2 border-orange-500 rounded-lg px-3 py-2 shadow-md">
+                              <div className="text-orange-700 font-bold text-xs mb-1">RESERVED</div>
+                              <div className="text-gray-700 text-[10px] mb-2">
+                                by {reservationInfo?.reservedByUsername || 'Unknown'}
                               </div>
-                                
-                                
-                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (reservationInfo?.repId) {
+                                    console.log('ðŸ—‘ï¸ X button clicked for rep:', reservationInfo.repId);
+                                    onDeleteReservation(reservationInfo.repId);
+                                  }
+                                }}
+                                className="bg-white hover:bg-gray-100 text-orange-700 font-semibold py-1 px-3 rounded text-[10px] border border-orange-500 transition-colors"
+                                title="Remove reservation"
+                              >
+                                âœ• Clear
+                              </button>
                             </div>
-                          ))
-                        )}
-                      </div>
+                          </div>
+                        </div>
+                      )}
                     </td>
                   );
                 })}
-
-                {/* 1K+ Rotation Cells - UPDATED: Pass rotation context */}
-                {over1kReps.map(rep => {
+                {/* 1K+ Rotation Cells - FIXED: Transparent overlay only on today */}
+                 {over1kReps.map(rep => {
                   const entries = getEntriesForCell(day, rep.id, '1kplus');
+                  const isReserved = isRepReservedForLane(rep.id, '1kplus');
+                  const reservationInfo = getReservationInfoForLane(rep.id, '1kplus');
+                  
+                  // CHECK: Is this today's cell?
+                  const isToday = day === currentDay && 
+                                  viewingMonth === currentDate.getMonth() && 
+                                  viewingYear === currentYear;
+                  const showReservationOverlay = isReserved && isToday;
+                  
                   return (
                     <td 
                       key={`${day}-${rep.id}`} 
-                      className={`border-r border-gray-200 cursor-pointer transition-all duration-200 ${getCellStyle(entries, day)}`}
-                      onClick={() => onCellClick(day, rep.id, viewingMonth, viewingYear)} // UPDATED: Pass viewingMonth and viewingYear
+                      className={`border-r border-gray-200 cursor-pointer transition-all duration-200 relative ${
+                        getCellStyle(entries, day)
+                      }`}
+                      onClick={() => {
+                        // FIXED: Allow clicking through - removed isReserved check
+                        onCellClick(day, rep.id, viewingMonth, viewingYear);
+                      }}
                       style={{ 
                         width: 'var(--data-cell-width)',
                         height: 'var(--data-cell-height)',
@@ -767,53 +866,81 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
                       }}
                     >
                       <div className="flex flex-col justify-start space-y-1 h-full">
-                        {entries.length === 0 ? (
-                          <div className="text-gray-400 text-center flex items-center justify-center h-full">
-                            <span className="text-xs">Click to add</span>
-                          </div>
-                        ) : (
-                          entries.map(entry => (
-                            <div
-                              key={entry.id}
-                              data-lead-id={entry.leadId}
-                              className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
-                              onMouseEnter={() => handleEntryHover(entry, true)}
-                              onMouseLeave={() => handleEntryHover(entry, false)}
-                            >
-                              <div className="flex-1 min-w-0">
-                                {renderEntryContent(entry)}
-                              </div>
+  {entries.length === 0 ? (
+    <div className="text-gray-400 text-center flex items-center justify-center h-full">
+      <span className="text-xs">Click to add</span>
+    </div>
+  ) : (
+    entries.map(entry => (
+      <div
+        key={entry.id}
+        data-lead-id={entry.leadId}
+        className={`entry-item group flex items-center justify-between px-2 py-1 rounded border text-xs cursor-default transition-all duration-200 ${getEntryVisualClasses(entry)}`}
+        onMouseEnter={() => handleEntryHover(entry, true)}
+        onMouseLeave={() => handleEntryHover(entry, false)}
+      >
+        <div className="flex-1 min-w-0">
+          {renderEntryContent(entry)}
+        </div>
 
-                              
-                             {/* NEW: hover actions include "Replace" for leads not already in replacement flow */}
-                              {/* Hover actions include "Replace" and "Unmark" */}
-                              <div className="hidden group-hover:flex items-center space-x-1 ml-2">
-  
-
-                               <button
-                                 onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (entry.type === 'lead') {
-                                      const lead = getLeadForEntry(entry);
-                                      if (lead) onEditLead(lead);
-                                    } else {
-                                      handleEntryAction(e, 'edit', entry);
-                                    }
-                                  }}
-                                 className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
-                                  title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
-                               >
-                                  <Edit className="w-3 h-3" />
-                               </button>
-                               
+        {/* Hover actions */}
+        <div className="hidden group-hover:flex items-center space-x-1 ml-2">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (entry.type === 'lead') {
+                const lead = getLeadForEntry(entry);
+                if (lead) onEditLead(lead);
+              } else {
+                handleEntryAction(e, 'edit', entry);
+              }
+            }}
+            className="p-1 text-gray-400 hover:text-blue-600 transition-colors rounded"
+            title={entry.type === 'lead' ? 'Edit lead' : 'Edit entry'}
+          >
+            <Edit className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    ))
+  )}
+</div>
+                      
+                      {/* NEW: Transparent Reservation Overlay - Only on Today's Cell */}
+                      {showReservationOverlay && (
+                        <div 
+                          className="absolute inset-0 bg-orange-50 bg-opacity-80 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-10"
+                          style={{ borderRadius: '4px' }}
+                        >
+                          <div className="text-center pointer-events-auto">
+                            <div className="bg-orange-100 border-2 border-orange-500 rounded-lg px-3 py-2 shadow-md">
+                              <div className="text-orange-700 font-bold text-xs mb-1">RESERVED</div>
+                              <div className="text-gray-700 text-[10px] mb-2">
+                                by {reservationInfo?.reservedByUsername || 'Unknown'}
                               </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (reservationInfo?.repId) {
+                                    console.log('ðŸ—‘ï¸ X button clicked for rep:', reservationInfo.repId);
+                                    onDeleteReservation(reservationInfo.repId);
+                                  }
+                                }}
+                                className="bg-white hover:bg-gray-100 text-orange-700 font-semibold py-1 px-3 rounded text-[10px] border border-orange-500 transition-colors"
+                                title="Remove reservation"
+                              >
+                                âœ• Clear
+                              </button>
                             </div>
-                          ))
-                        )}
-                      </div>
+                          </div>
+                        </div>
+                      )}
+                    
+
                     </td>
                   );
                 })}
+                 
               </tr>
             ))}
           </tbody>
@@ -834,7 +961,7 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
               <strong> Cell Width:</strong> {columnWidth}px
             </div>
             <div className="text-xs text-gray-500">
-              Click any cell to add an entry • Hover over entries to edit or delete • Click account numbers to open URLs • Use controls to adjust view
+              Click any cell to add an entry â€¢ Hover over entries to edit or delete â€¢ Click account numbers to open URLs â€¢ Use controls to adjust view
             </div>
           </div>
         </div>
