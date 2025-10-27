@@ -3,7 +3,7 @@ import { SalesRep } from '../types';
 import { Plus } from 'lucide-react';
 import { usePropertyTypes } from '../hooks/usePropertyTypes';
 import PropertyTypesManager from './PropertyTypesManager';
-
+//this should be deploying
 interface ParametersPanelProps {
   salesReps: SalesRep[];
   onUpdateReps: (reps: SalesRep[]) => void;
