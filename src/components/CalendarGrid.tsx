@@ -219,7 +219,7 @@ const formatDayHeader = (day: number) => {
         {showCantDo && cantDoTypes.length > 0 && (
           <div className="text-red-500">
             {cantDoTypes.join(', ')}
-            {rep.parameters.maxUnits && ` (â‰¤${rep.parameters.maxUnits})`}
+            {rep.parameters.maxUnits && ` ≤(${rep.parameters.maxUnits})`}
             {!rep.parameters.maxUnits && ``}
           </div>
         )}
