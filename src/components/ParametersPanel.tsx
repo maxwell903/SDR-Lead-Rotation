@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { SalesRep } from '../types';
 import { Plus } from 'lucide-react';
 import { usePropertyTypes } from '../hooks/usePropertyTypes';
-import PropertyTypesManager from './Propertytypesmanager';
+import PropertyTypesManager from './PropertyTypesManager';
 
 interface ParametersPanelProps {
   salesReps: SalesRep[];
