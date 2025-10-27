@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Edit2, Trash2, GripVertical } from 'lucide-react';
 import { usePropertyTypes } from '../hooks/usePropertyTypes';
-import PropertyTypeModal from './Propertytypemodal';
+import PropertyTypeModal from './PropertyTypeModal';
 import { PropertyType } from '../services/propertyTypesService';
 
 interface PropertyTypesManagerProps {
