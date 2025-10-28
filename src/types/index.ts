@@ -61,6 +61,7 @@ export interface LeadEntry {
   rotationTarget?: 'sub1k' | 'over1k' | 'both';
   propertyTypes: string[];
   time?: string; // For OOO entries
+   toTime?: string;
 }
 
 export type { NonLeadEntry } from '../services/nonLeadEntriesService';

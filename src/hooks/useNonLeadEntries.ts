@@ -221,6 +221,7 @@ function normalizeRow(row: any): NonLeadEntry {
     month: row.month,
     year: row.year,
     time: row.time ?? undefined,
+    toTime: row.to_time ?? undefined,
     rotationTarget: row.rotation_target ?? undefined,
     createdBy: row.created_by ?? undefined,
   } as NonLeadEntry;

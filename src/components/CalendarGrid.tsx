@@ -484,9 +484,13 @@ const renderEntryContent = (entry: LeadEntry): React.ReactNode => {
   if (entry.type === 'ooo') {
     return (
       <div className="space-y-0.5">
-        <div className="font-medium">OOO</div>
+        <div className="font-medium text-[11px]">OOO</div>
         {entry.time && (
-          <div className="text-[10px] text-red-600">{entry.time}</div>
+           <div className="text-[9px] text-red-600">{entry.time}
+            {entry.toTime && (
+              <> → {entry.toTime}</>
+            )}
+          </div>
         )}
       </div>
     );

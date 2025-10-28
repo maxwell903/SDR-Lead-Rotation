@@ -459,6 +459,7 @@ const [editingLead, setEditingLead] = useState<Lead | null>(null);
       year: currentDate.getFullYear(),
       rotationTarget: entry.rotationTarget as 'sub1k' | 'over1k' | 'both' | undefined,
       time: entry.time, // Include time for OOO entries
+      toTime: entry.toTime,
       comments: [],
       propertyTypes: [],
     }));
