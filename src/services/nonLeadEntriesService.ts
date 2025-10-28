@@ -12,6 +12,7 @@ export interface NonLeadEntry {
   month: number;
   year: number;
   time?: string; // For OOO entries only
+  toTime?: string; // For OOO entries only - end time
   rotationTarget?: 'sub1k' | 'over1k' | 'both';
   createdBy?: string;
   createdAt?: string;
@@ -27,6 +28,7 @@ type DBNonLeadEntryRow = {
   month: number | null;
   year: number | null;
   time: string | null;
+  to_time: string | null;
   rotation_target: string | null;
   created_by: string | null;
   created_at: string | null;
@@ -42,6 +44,7 @@ const rowToNonLeadEntry = (r: DBNonLeadEntryRow): NonLeadEntry => ({
   month: r.month ?? 1,
   year: r.year ?? new Date().getFullYear(),
   time: r.time ?? undefined,
+  toTime: r.to_time ?? undefined,
   rotationTarget: r.rotation_target as 'sub1k' | 'over1k' | 'both' | undefined,
   createdBy: r.created_by ?? undefined,
   createdAt: r.created_at ?? undefined,
@@ -57,6 +60,7 @@ const nonLeadEntryToRow = (entry: NonLeadEntry): Partial<DBNonLeadEntryRow> => (
   month: entry.month,
   year: entry.year,
   time: entry.time ?? null,
+  to_time: entry.toTime ?? null,
   rotation_target: entry.rotationTarget ?? null,
 });
 

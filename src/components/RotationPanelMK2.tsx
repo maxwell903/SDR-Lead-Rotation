@@ -154,7 +154,7 @@ const [editingRep, setEditingRep] = useState<{
     // Get OOO entries from non_lead_entries table for today
     const { data: oooData, error } = await supabase
       .from('non_lead_entries')
-      .select('rep_id, time, rotation_target')
+      .select('rep_id, time, to_time, rotation_target')
       .eq('entry_type', 'OOO')
       .eq('day', today.day)
       .eq('month', today.month)
@@ -165,29 +165,51 @@ const [editingRep, setEditingRep] = useState<{
     const oooSet = new Set<string>();
     const oooTargets = new Map<string, string>(); // repId -> rotation_target
     
-    // Only add to OOO set if the time has passed
     oooData?.forEach((entry: any) => {
       if (!entry.rep_id) return;
       
-      // If no time specified, assume they're OOO immediately
-      if (!entry.time) {
-        oooSet.add(entry.rep_id);
-        oooTargets.set(entry.rep_id, entry.rotation_target || 'both');
-        return;
+      let isCurrentlyOOO = false;
+      
+      // Case 1: No times specified - OOO all day
+      if (!entry.time && !entry.to_time) {
+        isCurrentlyOOO = true;
+      }
+      // Case 2: Only "from" time specified - OOO from that time until midnight
+      else if (entry.time && !entry.to_time) {
+        const oooStartTime = parseTimeString(entry.time, today.day, today.month, today.year);
+        if (oooStartTime && now >= oooStartTime) {
+          isCurrentlyOOO = true;
+        }
+      }
+      // Case 3: Only "to" time specified - OOO from midnight until that time
+      else if (!entry.time && entry.to_time) {
+        const oooEndTime = parseTimeString(entry.to_time, today.day, today.month, today.year);
+        if (oooEndTime && now < oooEndTime) {
+          isCurrentlyOOO = true;
+        }
+      }
+      // Case 4: Both times specified - OOO between the two times
+      else if (entry.time && entry.to_time) {
+        const oooStartTime = parseTimeString(entry.time, today.day, today.month, today.year);
+        const oooEndTime = parseTimeString(entry.to_time, today.day, today.month, today.year);
+        
+        if (oooStartTime && oooEndTime) {
+          // Check if current time is within the range
+          if (now >= oooStartTime && now < oooEndTime) {
+            isCurrentlyOOO = true;
+          }
+        }
       }
       
-      // Parse the OOO time (format: "HH:MM" or "HH:MM AM/PM")
-      const oooTime = parseTimeString(entry.time, today.day, today.month, today.year);
-      
-      // Only mark as OOO if the specified time has passed
-      if (oooTime && now >= oooTime) {
+      // If currently OOO, add to the set
+      if (isCurrentlyOOO) {
         oooSet.add(entry.rep_id);
         oooTargets.set(entry.rep_id, entry.rotation_target || 'both');
       }
     });
     
     setOooReps(oooSet);
-    setOooTargets(oooTargets); // You'll need to add this state
+    setOooTargets(oooTargets); 
   } catch (error) {
     console.error('Error loading OOO status:', error);
   }

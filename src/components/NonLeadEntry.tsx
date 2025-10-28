@@ -97,6 +97,7 @@ const NonLeadEntryModal: React.FC<NonLeadEntryModalProps> = ({
   
   const [formData, setFormData] = useState({
     time: entry.time || '',
+    toTime: entry.toTime || '',
     date: new Date(entry.year, entry.month - 1, entry.day),
     rotationTarget: entry.rotationTarget || 'both',
     comments: [] as string[],
@@ -132,30 +133,35 @@ const getSalesRepName = (repId: string) => {
 
     // Check if any data actually changed
     const hasDataChanged = (): boolean => {
-      // Compare time
-      const oldTime = entry.time || '';
-      const newTime = formData.time.trim();
-      if (oldTime !== newTime) return true;
+  // Compare time
+  const oldTime = entry.time || '';
+  const newTime = formData.time.trim();
+  if (oldTime !== newTime) return true;
 
-      // Compare date
-      const oldDate = new Date(entry.year, entry.month - 1, entry.day);
-      const newDate = formData.date;
-      if (
-        oldDate.getFullYear() !== newDate.getFullYear() ||
-        oldDate.getMonth() !== newDate.getMonth() ||
-        oldDate.getDate() !== newDate.getDate()
-      ) {
-        return true;
-      }
+  // Compare toTime  ← ADD THIS SECTION
+  const oldToTime = entry.toTime || '';
+  const newToTime = formData.toTime.trim();
+  if (oldToTime !== newToTime) return true;
 
-      // Compare rotation target
-      if (formData.rotationTarget !== entry.rotationTarget) return true;
+  // Compare date
+  const oldDate = new Date(entry.year, entry.month - 1, entry.day);
+  const newDate = formData.date;
+  if (
+    oldDate.getFullYear() !== newDate.getFullYear() ||
+    oldDate.getMonth() !== newDate.getMonth() ||
+    oldDate.getDate() !== newDate.getDate()
+  ) {
+    return true;
+  }
 
-      // Compare comments - only if there are any
-      if (formData.comments.length > 0) return true;
+  // Compare rotation target
+  if (formData.rotationTarget !== entry.rotationTarget) return true;
 
-      return false;
-    };
+  // Compare comments - only if there are any
+  if (formData.comments.length > 0) return true;
+
+  return false;
+};
 
     setIsSubmitting(true);
     try {
@@ -163,6 +169,7 @@ const getSalesRepName = (repId: string) => {
       if (hasDataChanged()) {
         const updateData = {
           time: formData.time.trim() || null,
+          toTime: formData.toTime.trim() || null,
           day: formData.date.getDate(),
           month: formData.date.getMonth() + 1,
           year: formData.date.getFullYear(),
@@ -279,28 +286,44 @@ const getSalesRepName = (repId: string) => {
             </div>
 
            
-            {/* 3) Time field for BOTH OOO and Skip */}
+            {/* 3) From Time field - renamed from "Time" */}
             <div className="md:col-span-1">
               <label className="block text-sm font-bold text-gray-700 mb-3">
-                Time {entry.entryType === 'OOO' ? '(Optional)' : ''}
+                From Time {entry.entryType === 'OOO' ? '(Optional)' : ''}
               </label>
               <TimeInput
                 value={formData.time}
                 onChange={(time) => setFormData(prev => ({ ...prev, time }))}
               />
               {entry.entryType === 'OOO' && (
-                <p className="text-xs text-gray-500 mt-1">Leave blank for all-day OOO</p>
+                <p className="text-xs text-gray-500 mt-1">When OOO starts (leave blank for all-day)</p>
               )}
             </div>
 
-            {/* 4) Date using DatePicker component */}
-            <div className="md:col-span-1">
+            {/* 3.5) To Time field - NEW FIELD, only for OOO */}
+            {entry.entryType === 'OOO' && (
+              <div className="md:col-span-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3">
+                  To Time (Optional)
+                </label>
+                <TimeInput
+                  value={formData.toTime}
+                  onChange={(toTime) => setFormData(prev => ({ ...prev, toTime }))}
+                />
+                <p className="text-xs text-gray-500 mt-1">When OOO ends (leave blank for midnight)</p>
+              </div>
+            )}
+
+            {/* 4) Date - updated className to span 2 columns for OOO */}
+            <div className={entry.entryType === 'OOO' ? 'md:col-span-2' : 'md:col-span-1'}>
               <label className="block text-sm font-bold text-gray-700 mb-3">Date</label>
               <DatePicker
                 value={formData.date}
                 onChange={(date) => setFormData(prev => ({ ...prev, date }))}
               />
             </div>
+
+            
 
             {/* 5) Rotation Target */}
             <div className="md:col-span-2">

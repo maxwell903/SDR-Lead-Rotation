@@ -135,7 +135,8 @@ const LeadModal: React.FC<LeadModalProps> = ({
 
   const [newComment, setNewComment] = useState('');
   const [entryType, setEntryType] = useState<'lead' | 'skip' | 'ooo' | 'next'>('lead');
-  const [oooTime, setOooTime] = useState<string>('9:00 AM');
+  const [oooTime, setOooTime] = useState<string>('8:00 AM');
+  const [oooToTime, setOooToTime] = useState<string>('6:00 PM');
   const [eligibleReps, setEligibleReps] = useState<SalesRep[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -465,6 +466,7 @@ useEffect(() => {
         ? ((formData.unitCount ?? 0) >= 1000 ? 'over1k' : 'sub1k')
         : rotationTarget, // Use state variable for OOO/Skip
         oooTime: (entryType === 'ooo' || entryType === 'skip') ? oooTime : undefined,
+        oooToTime: entryType === 'ooo' ? oooToTime : undefined,
         replaceToggle,
         originalLeadIdToReplace: replaceToggle ? originalLeadIdToReplace : undefined,
         id: editingEntry?.id
@@ -812,16 +814,33 @@ useEffect(() => {
                   </select>
                 </div>
 
-                {/* Time */}
+              {/* From Time */}
+              <div className="md:col-span-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3">
+                  From Time {entryType === 'ooo' ? '(Optional)' : ''}
+                </label>
+                <TimeInput
+                  value={oooTime}
+                  onChange={setOooTime}
+                />
+                {entryType === 'ooo' && (
+                  <p className="text-xs text-gray-500 mt-1">When OOO starts (leave blank for all-day)</p>
+                )}
+              </div>
+
+              {/* To Time - Only for OOO */}
+              {entryType === 'ooo' && (
                 <div className="md:col-span-1">
                   <label className="block text-sm font-bold text-gray-700 mb-3">
-                    Time
+                    To Time (Optional)
                   </label>
                   <TimeInput
-                    value={oooTime}
-                    onChange={setOooTime}
+                    value={oooToTime}
+                    onChange={setOooToTime}
                   />
+                  <p className="text-xs text-gray-500 mt-1">When OOO ends (leave blank for midnight)</p>
                 </div>
+              )}
 
                 {/* Rotation Target */}
                 <div className="md:col-span-2">

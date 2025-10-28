@@ -794,7 +794,8 @@ const handleAddLead = async (leadData: any) => {
       day: selectedCell?.day || new Date().getDate(),
       month: leadMonth + 1,
       year: leadYear,
-      time: leadData.oooTime, // Ã¢Å“â€¦ FIXED: Pass time for both OOO and Skip
+      time: leadData.oooTime, //FIXED: Pass time for both OOO and Skip
+       toTime: leadData.oooToTime,
       rotationTarget: leadData.rotationTarget || 'both',
     });
 
