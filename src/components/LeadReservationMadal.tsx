@@ -262,16 +262,18 @@ const LeadReservationModal: React.FC<LeadReservationModalProps> = ({
       }
     }
 
+    
     // Check property types (if provided)
-    if (propertyTypes.length > 0) {
-      if (rep.parameters.propertyTypes.length === 0) {
-        return true; // No restrictions = can handle all types
-      }
-      const hasMatchingType = propertyTypes.some(pt => 
-        rep.parameters.propertyTypes.includes(pt)
-      );
-      if (!hasMatchingType) return false;
-    }
+if (propertyTypes.length > 0) {
+  if (rep.parameters.propertyTypes.length === 0) {
+    return true; // No restrictions = can handle all types
+  }
+  // If they're missing even one property type, they're excluded
+  const hasAllPropertyTypes = propertyTypes.every(pt => 
+    rep.parameters.propertyTypes.includes(pt)
+  );
+  if (!hasAllPropertyTypes) return false;
+}
 
     return true;
   });
